@@ -140,7 +140,7 @@ def train_eval(params):
     # scheduler1 = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, threshold=5e-3, factor=0.5);
     # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=50000, gamma=0.6)
     # scheduler1 = get_cosine_schedule_with_warmup(optimizer, 10000, 100000);
-    scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50000);
+    scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100000);
 
     criterion = torch.nn.NLLLoss();
 

@@ -66,9 +66,9 @@ maze = TMaze(height = 4,
              switch_after = 15);
 
 # try:
-state_dict = torch.load("model_maze", map_location=device);
+state_dict = torch.load("model_maze_0bias", map_location=device);
 model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
-optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+# optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
 cumReward = state_dict["cumReward"];
 print("model loaded successfully")
 # except:

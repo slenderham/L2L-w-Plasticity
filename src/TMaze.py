@@ -55,6 +55,15 @@ class TMaze:
         self.num_legal_positions = self.height*3+4*self.width-4;
         assert(len(self.legal_positions)==self.num_legal_positions);
 
+        self.mirror_positions = {};
+        for x in self.legal_positions.keys():
+            if x[1]>self.width and (self.maze[x[0], 2*self.width+2-x[1]]==0):
+                self.mirror_positions[x] = (x[0], 2*self.width+2-x[1]);
+            else:
+                self.mirror_positions[x] = x;
+
+        print(self.mirror_positions);
+
         self.agentpos = self.origin.copy(); # initialize at bottom of maze
         self.t = 0; # time within each trial
         self.epNum = 0; # the number of times the goal is reached
@@ -68,10 +77,8 @@ class TMaze:
         ];
 
         self.all_goal_probs = [
-            [0.8, 0.2],
-            [0.7, 0.3],
-            [0.3, 0.7],
-            [0.2, 0.8],
+            [0.75, 0.25],
+            [0.25, 0.75],
         ];
         
         self._sample_task();
@@ -329,7 +336,7 @@ class Trajectories:
             #for each trajectory, for each timestep in that trajectory, there should be a feature vector corresponding to that 
             for i in range(len(goal_times[t])-1):
                 for j in range(goal_times[t][i], goal_times[t][i+1]):
-                    feats[pos[t][j]].append({
+                    feats[self.maze.mirror_positions[pos[t][j]]].append({
                         "prev_outcome": outcomes[t][i],
                         "prev_choice": 1.0 if choices[t][i]=="left" else 0.0,
                         "q_prev_c": Qls[t][i] if choices[t][i]=="left" else Qrs[t][i],
@@ -349,7 +356,7 @@ class Trajectories:
 
         for t in range(len(activities)):
             for j in range(goal_times[t][0], goal_times[t][-1]):
-                activities_by_pos[pos[t][j]].append(activities[t][j]);
+                activities_by_pos[self.maze.mirror_positions[pos[t][j]]].append(activities[t][j]);
 
         # flatten all 
         acts_flat = {};
@@ -364,11 +371,11 @@ class Trajectories:
         feats_flat = {};
         for k, v in feats.items():
             feats_flat[k] = feat_fit.transform(v);
-            feats_flat[k] = sm.add_constant(feats_flat[k], prepend=True);
+            feats_flat[k] = sm.add_constant(feats_flat[k], prepend=True, has_constant="raise");
 
         results = defaultdict(list);
 
-        for k in feats.keys():
+        for k in feats_flat.keys():
             for n in range((len(activities[0][0]))):
                 results[k].append(sm.OLS(acts_flat[k][:,n], feats_flat[k]).fit());
 

@@ -110,8 +110,8 @@ class SGRUCell(torch.nn.Module):
                 torch.nn.init.zeros_(param);
             elif "h2h.bias" in name :
                 torch.nn.init.zeros_(param);
-                # torch.nn.init.constant_(param[:self.hidden_dim], -1)
-                # torch.nn.init.constant_(param[self.hidden_dim:2*self.hidden_dim], -2);
+                torch.nn.init.constant_(param[:self.hidden_dim], -1);
+                torch.nn.init.constant_(param[self.hidden_dim:2*self.hidden_dim], -1);
             elif "h2mod.weight" in name:
                 torch.nn.init.kaiming_normal_(param, nonlinearity="relu");
             elif "h2mod.bias" in name:
