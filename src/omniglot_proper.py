@@ -36,7 +36,7 @@ def add_weight_decay(model):
         else:
             decay.append(param);
 
-    return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': 1e-4}];
+    return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': 0.}];
 
 def offset(batch):
     global batch_size, ways, shots, img_size, device;
@@ -71,7 +71,7 @@ batch_size = 16;
 ways = 20;
 shots = 1;
 img_size = 28;
-train_batches = 100000;
+train_batches = 500000;
 val_batches = 5000;
 
 if torch.cuda.is_available():
@@ -138,9 +138,9 @@ def train_eval(params):
 
     optimizer = optim.AdamW(param_groups, lr=lr, betas=(0.9, 0.99), eps=1e-4);
     # scheduler1 = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, threshold=5e-3, factor=0.5);
-    # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=50000, gamma=0.6)
+    scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=50000, gamma=0.6)
     # scheduler1 = get_cosine_schedule_with_warmup(optimizer, 10000, 100000);
-    scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100000);
+    # scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000000);
 
     criterion = torch.nn.NLLLoss();
 

@@ -87,7 +87,6 @@ class PPO:
                 surr1 = ratios * adv;
                 surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * adv;
                 loss += -torch.min(surr1, surr2).mean() + self.beta_v*self.value_loss(value[-1].squeeze(), r) - self.beta_entropy*dist_entropy;
-                loss += 0.01*(last_layer_out.pow(2).mean());
 
             loss.backward()
             

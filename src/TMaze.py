@@ -77,8 +77,8 @@ class TMaze:
         ];
 
         self.all_goal_probs = [
-            [0.75, 0.25],
-            [0.25, 0.75],
+            [0.85, 0.15],
+            [0.15, 0.85],
         ];
         
         self._sample_task();

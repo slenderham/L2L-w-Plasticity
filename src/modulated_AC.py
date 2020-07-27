@@ -53,11 +53,15 @@ class SGRUCell(torch.nn.Module):
     def forward(self, x, h, v, dU, trace):
         curr_out = [];
         mods = [];
+        ss = [];
+        ms = [];
         for c in range(x.shape[0]):
-            v, h, dU, trace, mod = self._forward_step(x[c], h, v, dU, trace);
+            v, h, dU, trace, (mod, s, m) = self._forward_step(x[c], h, v, dU, trace);
             curr_out.append(h);
             mods.append(mod);
-        return v, h, dU, trace, torch.stack(curr_out), torch.stack(mods);
+            ss.append(s);
+            ms.append(m);
+        return v, h, dU, trace, torch.stack(curr_out), (torch.stack(mods), torch.stack(ss), torch.stack(ms));
 
     def _forward_step(self, x, h, v, dU, trace):
         trace_e, trace_E = trace;
@@ -96,7 +100,7 @@ class SGRUCell(torch.nn.Module):
         dU = torch.where(dU>upper, upper, dU);
         dU = torch.where(dU<lower, lower, dU);
         
-        return v, new_h, dU, (new_trace_e, new_trace_E), mod;
+        return v, new_h, dU, (new_trace_e, new_trace_E), (mod, s, m);
 
     def reset_parameter(self):
         for name, param in self.named_parameters():
@@ -110,8 +114,8 @@ class SGRUCell(torch.nn.Module):
                 torch.nn.init.zeros_(param);
             elif "h2h.bias" in name :
                 torch.nn.init.zeros_(param);
-                torch.nn.init.constant_(param[:self.hidden_dim], -1);
-                torch.nn.init.constant_(param[self.hidden_dim:2*self.hidden_dim], -1);
+                # torch.nn.init.constant_(param[:self.hidden_dim], -1);
+                # torch.nn.init.constant_(param[self.hidden_dim:2*self.hidden_dim], -1);
             elif "h2mod.weight" in name:
                 torch.nn.init.kaiming_normal_(param, nonlinearity="relu");
             elif "h2mod.bias" in name:
