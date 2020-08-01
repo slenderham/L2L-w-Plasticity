@@ -1,25 +1,24 @@
 # -*- coding: utf-8 -*-
 
 # import tensorly as tl
-from tensorly.decomposition import parafac
 from matplotlib import pyplot as plt
 import matplotlib.colors as mcolors
 from mpl_toolkits.mplot3d import Axes3D
+import colorcet as cc
+
 import numpy as np
 import pickle
 import os
+
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import torch
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+import tensortools as tt
 
 plt.style.use('seaborn-pastel');
 colors1 = plt.cm.tab20b(np.linspace(0, 1, 128))
 colors2 = plt.cm.tab20c(np.linspace(0, 1, 128))
-
-# combine them and build a new colormap
-colors = np.vstack((colors1, colors2))
-mymap = mcolors.LinearSegmentedColormap.from_list('my_colormap', colors)
 
 def forbenius_norm(mat, lag):
 
@@ -40,12 +39,7 @@ def decomp(vs, dUs, dims, chunks, turns):
 
 	# figure out some ways to reshape such that all samples with the same first dimension are of the same task
 
-	record = torch.load('WCST');
-	vs = record['vs'];
-	dUs = record['dUs'];
-	dims = record['dims'];
-
-	vs = np.array([[v.squeeze().detach().numpy() for v in v_sample] for v_sample in vs]);
+	vs = np.array([[v.squeeze().detach().numpy() for v in v_sample] for v_sample in vs]); # flatten 
 	dUs = np.array([[dU.squeeze().detach().numpy() for dU in dU_sample] for dU_sample in dUs]);
 
 	num_samples, time_steps, channel_num = vs.shape;
@@ -78,15 +72,52 @@ def decomp(vs, dUs, dims, chunks, turns):
 	for i in range(3):
 		axes[i].plot(dUsFactors[i]);
 
-	pca_v = PCA();
-	low_v = pca_v.fit_transform(vs);
-	axe =plt.figure().add_subplot(111, projection='3d')
-	axe.scatter(low_v[:,0], low_v[:,1],low_v[:,2], cmap=mymap, c=np.arange(400))
-	axe.plot(low_v[:,0], low_v[:,1], low_v[:,2],alpha=0.1, c='black')
+def vis_parafac(x, rank):
+    U = tt.cp_als(x, rank=rank, verbose=True)
+    V = tt.cp_als(x, rank=rank, verbose=True)
 
-	pca_dU = PCA();
-	low_dU = pca_dU.fit_transform(dUs.reshape(400, -1));
-	axe =plt.figure().add_subplot(111, projection='3d')
-	axe.scatter(low_dU[:,0], low_dU[:,1],low_dU[:,2], cmap=mymap, c=np.arange(400))
-	axe.plot(low_dU[:,0], low_dU[:,1], low_dU[:,2], alpha=0.1, c='black')
+    # Align the two fits and print a similarity score.
+    sim = tt.kruskal_align(U.factors, V.factors, permute_U=True, permute_V=True)
+    print(sim)
 
+    # make 
+    if (x.shape==3):
+        fig, axes = plt.subplots(rank, 3);
+        for i in range(rank):
+            axes[0, i].scatter(np.arange(len(U.factors[i][1])), U.factors[i][1])
+            axes[0, i].set_xlabel("Time")
+            axes[1, i].plot(U.factors[i][0])
+            axes[1, i].set_xlabel("Trial")
+            axes[2, i].bar(U.factors[i][2]);
+            axes[2, i].set_xlabel("Neuron")
+    elif (x.shape==4):
+        fig, axes = plt.subplots(rank, 4);
+        for i in range(rank):
+            axes[0, i].scatter(np.arange(len(U.factors[i][1])), U.factors[i][1])
+            axes[0, i].set_xlabel("Time")
+            axes[1, i].plot(U.factors[i][0])
+            axes[1, i].set_xlabel("Trial")
+            mat_factor = np.outer(U.factors[i][2], U.factors[i][3])
+            lim = max(max(mat_factor), -min(mat_factor));
+            axes[2, i].imshow(mat_factor, cmap='coolwarm', vmin=-lim, vmax=lim);
+            axes[2, i].set_xlabel("Presynaptic Neuron")
+            axes[2, i].set_ylabel("Postsynaptic Neuron")
+    else:
+        raise ValueError('shape of tensor x needs to be 3 (batch time series of vectors) or 4 (batch time series of matrices');
+
+    fig.suptitle("")
+    fig.tight_layout()
+    plt.show();
+
+def vis_pca(x, tags):
+    assert(len(x.shape)==2);
+    assert(len(tags.shape)==1);
+    assert(x.shape[0]==tags.shape[0]);
+    cmap = mcolors.LinearSegmentedColormap.from_list('mymap', cc.glasbey_light[:22]);
+    pca = PCA();
+	low_x = pca.fit_transform(x);
+	axe = plt.figure().add_subplot(111, projection='3d')
+	axe.scatter(low_x[:,0], low_x[:,1],low_x[:,2], cmap=cmap, c=tags);
+	axe.plot(low_x[:,0], low_x[:,1], low_x[:,2],alpha=0.1, c='black');
+    plt.figure().tight_layout();
+    plt.show();

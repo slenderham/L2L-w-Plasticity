@@ -54,11 +54,15 @@ class SGRUCell(torch.nn.Module):
     def forward(self, x, h, v, dU, trace):
         curr_out = [];
         mods = [];
+        keys = [];
+        dicts = [];
         for c in range(x.shape[0]):
             v, h, dU, trace, mod = self._forward_step(x[c], h, v, dU, trace);
             curr_out.append(h);
             mods.append(mod);
-        return v, h, dU, trace, torch.stack(curr_out), torch.stack(mods);
+            keys.append(trace[0]);
+            dicts.append(dU);
+        return v, h, dU, trace, torch.stack(curr_out), torch.stack(mods), torch.stack(keys), torch.stack(dicts);
 
     def _forward_step(self, x, h, v, dU, trace):
         trace_e, trace_E = trace;
@@ -167,32 +171,24 @@ class SGRU(torch.nn.Module):
             self.conv1 = torch.nn.Conv2d(1, 64, 3, 1, 1); # 64@28*28
             self.pool1 = torch.nn.MaxPool2d(2, 2); #64@14*14
             self.bn1 = torch.nn.BatchNorm2d(64);
-            # self.gn1 = torch.nn.GroupNorm(4, 64);
 
             self.conv2 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@14*14
             self.pool2 = torch.nn.MaxPool2d(2, 2); #64@7*7
             self.bn2 = torch.nn.BatchNorm2d(64);
-            # self.gn2 = torch.nn.GroupNorm(4, 64);
 
             self.conv3 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@7*7
             self.pool3 = torch.nn.MaxPool2d(2, 2); #64@3*3
             self.bn3 = torch.nn.BatchNorm2d(64);
-            # self.gn3 = torch.nn.GroupNorm(4, 64);
 
             self.conv4 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@3*3
             self.pool4 = torch.nn.MaxPool2d(2, 2); # 64@1*1
             self.bn4 = torch.nn.BatchNorm2d(64);
-            # self.gn4 = torch.nn.GroupNorm(4, 64);
 
             def encode(x):
                 x = self.bn1(torch.relu(self.pool1(self.conv1(x))));
                 x = self.bn2(torch.relu(self.pool2(self.conv2(x))));
                 x = self.bn3(torch.relu(self.pool3(self.conv3(x))));
                 x = self.bn4(torch.relu(self.pool4(self.conv4(x))));
-                # x = self.gn1(torch.relu(self.pool1(self.conv1(x))));
-                # x = self.gn2(torch.relu(self.pool2(self.conv2(x))));
-                # x = self.gn3(torch.relu(self.pool3(self.conv3(x))));
-                # x = self.gn4(torch.relu(self.pool4(self.conv4(x))));
                 x = torch.flatten(x, 1);
                 return x;
             self.img_encoder = encode;
@@ -255,7 +251,7 @@ class SGRU(torch.nn.Module):
         multi_mods = [];
 
         for l, rnn in enumerate(self.rnns):
-            v[l], h[l], dU[l], trace[l], prev_out, mods = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l]);
+            v[l], h[l], dU[l], trace[l], prev_out, mods, keys, dicts = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l]);
             multi_mods.append(mods);
 
             if l!=self.num_layers-1:
@@ -263,7 +259,7 @@ class SGRU(torch.nn.Module):
             else:
                 prev_out = self.locked_drop(prev_out, self.dropout_o);
 
-        return v, h, dU, trace, (prev_out, self.decoder(prev_out));
+        return v, h, dU, trace, ({'vals':prev_out, 'keys':keys, 'dicts':dicts}, self.decoder(prev_out));
 
     def get_init_states(self, batch_size, device):
         v_0 = [];

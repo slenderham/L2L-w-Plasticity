@@ -82,18 +82,18 @@ $$
 
 - tasks:
   
-  - **language modelling (char level)**
+  - language modelling (char level)
     - model doesn't use fast weight!!!! limiting factors
       - clip value
       - alpha
       - tau_U
-  - associative recall
+  - **associative recall with omniglot**
   - **wisconsin card sort**
   - make continuous time RNN, no adaptive time constant
     - Sequential MNIST with Delay Noise: both seem to be doing fine
-  - **meta learning time series transformation**
-  - **add fixation output to force the network activity level to remain constant**
-  - **water maze?**
+  - meta learning time series transformation
+  - add fixation output to force the network activity level to remain constant
+  - **two forced choice maze task**
   - able to procedurally generate, randomize 
   
 - analysis:

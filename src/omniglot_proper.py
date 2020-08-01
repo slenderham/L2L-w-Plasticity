@@ -1,3 +1,4 @@
+# %%
 import torch
 from torchvision import datasets, transforms
 from modulated_full import SGRU
@@ -10,20 +11,15 @@ from tqdm import tqdm
 from PIL import Image
 from lamb import Lamb
 import pickle
+from decode import calculateAttention
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize, RandomAffine
 from torchmeta.utils.data import BatchMetaDataLoader
 
-from ax.service.managed_loop import optimize
-from ax.modelbridge.registry import Models
-from ax.core.search_space import SearchSpace
-from ax.core.simple_experiment import SimpleExperiment
-from ax import RangeParameter, ParameterType, ChoiceParameter
-
-seed=randint(0, 100);
-# seed=7;
+# seed=randint(0, 100);
+seed=83;
 print(seed);
 torch.manual_seed(seed);
 np.random.seed(seed);
@@ -71,8 +67,8 @@ batch_size = 16;
 ways = 20;
 shots = 1;
 img_size = 28;
-train_batches = 500000;
-val_batches = 5000;
+train_batches = 1;
+val_batches = 1;
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -138,9 +134,9 @@ def train_eval(params):
 
     optimizer = optim.AdamW(param_groups, lr=lr, betas=(0.9, 0.99), eps=1e-4);
     # scheduler1 = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, threshold=5e-3, factor=0.5);
-    scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=50000, gamma=0.6)
+    # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=50000, gamma=0.6)
     # scheduler1 = get_cosine_schedule_with_warmup(optimizer, 10000, 100000);
-    # scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000000);
+    scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000000);
 
     criterion = torch.nn.NLLLoss();
 
@@ -222,12 +218,16 @@ def train_eval(params):
                         break;
 
         if (idx+1)%train_batches==0:
+            print('training complete, proceeding to test')
             break;
 
-    valLoss = 0;
-    valShotAccuracy = 0;
+    testLoss = 0;
+    testShotAccuracy = 0;
 
-    
+    hs = [];
+    dUs = [];
+    trace_es = [];
+
     with torch.no_grad():
         for jdx, batch in tqdm(test_iter, position=0):
             input_total, label = offset(batch);
@@ -238,61 +238,55 @@ def train_eval(params):
                                                                                 v = new_v, \
                                                                                 dU = new_dU, \
                                                                                 trace = new_trace);
-            valLoss += criterion(output[-1], label)/val_batches;
-            valShotAccuracy += torch.mean(torch.as_tensor(torch.argmax(output[-1], dim=1)==label, dtype=torch.float))/val_batches;
+            
+            
+
+            testLoss += criterion(output[-1], label)/val_batches;
+
+            hs.append(last_layer_out['vals']);
+            trace_es.append(last_layer_out['keys']);
+            dUs.append(last_layer_out['dicts']);
+
+            testShotAccuracy += torch.mean(torch.as_tensor(torch.argmax(output[-1], dim=1)==label, dtype=torch.float))/val_batches;
             if ((jdx+1)%val_batches==0):
-                print(valLoss, valShotAccuracy);
+                print(testLoss, testShotAccuracy);
                 break;
 
-    return valShotAccuracy.item();
+    return testShotAccuracy.item(), torch.cat(hs, dim=1), torch.cat(dUs, dim=1), torch.cat(trace_es, dim=1);
 
-# search_space = SearchSpace(
-#     parameters=[
-#         RangeParameter(
-#             name="lr", parameter_type=ParameterType.FLOAT, lower=1e-4, upper=3e-3, log_scale=True
-#         ),
-#         RangeParameter(
-#             name="clip", parameter_type=ParameterType.FLOAT, lower=0.25, upper=5.0
-#         ),
-#         RangeParameter(
-#             name="clip_val", parameter_type=ParameterType.FLOAT, lower=0.25, upper=5.0
-#         ),
-#         RangeParameter(
-#             name="alpha_init", parameter_type=ParameterType.FLOAT, lower=1e-4, upper=1, log_scale=True
-#         ),
-#         RangeParameter(
-#             name="tau_U_init", parameter_type=ParameterType.FLOAT, lower=-4, upper=-1
-#         )
-#     ]
-# );
 
-train_eval({});
+acc, hs, dUs, trace_es = train_eval({});
+# calculate the attention index over the previous 
+t_steps = 4*(shots*ways+1);
 
-# exp = SimpleExperiment(
-#     name="omniglot",
-#     search_space=search_space,
-#     evaluation_function=train_eval,
-#     objective_name="acc",
-#     minimize=False,
-# )
+assert(hs.shape==(t_steps, val_batches*batch_size, 512)), "hs's shape is {hs.shape}"
+assert(dUs.shape==(t_steps, val_batches*batch_size, 512, 512)), "dUs's shape is {dUs.shape}"
+assert(trace_es.shape==(t_steps, val_batches*batch_size, 512)), "trace_es's shape is {trace_es.shape}"
+ws_h = np.empty((t_steps, val_batches*batch_size, t_steps));
+ws_e = np.empty((t_steps, val_batches*batch_size, t_steps));
+for i in range(1, t_steps):
+    ws_i = np.stack(calculateAttention(dUs[i], hs[i-1], torch.cat([hs[:i], trace_es[:i]], dim=0)), axis=0); # --> batch_size x num_steps
+    ws_i_h = np.concatenate([ws_i[:t_steps], np.empty((val_batches*batch_size, t_steps-i))], axis=1);
+    ws_i_e = np.concatenate([ws_i[t_steps:], np.empty((val_batches*batch_size, t_steps-i))], axis=1);
+    ws_e[i] = ws_i_e
+    ws_h[i] = ws_i_h
 
-# try:
-#     exp=pickle.load(open("omniglot_exp", "rb"));
-#     print("Experiment restored");
-# except:
-#     print("No experiment to restore");
-#     sobol = Models.SOBOL(exp.search_space)
-#     for i in range(10):
-#         exp.new_trial(generator_run=sobol.gen(1));print("sobol", i);
-#         pickle.dump(exp, open("omniglot_exp", "wb"));
 
-# best_arm = None
-# for i in range(15):
-#     gpei = Models.GPEI(experiment=exp, data=exp.eval());print("opt", i);
-#     generator_run = gpei.gen(1)
-#     best_arm, _ = generator_run.best_arm_predictions
-#     print(best_arm.parameters);
-#     exp.new_trial(generator_run=generator_run);
-#     pickle.dump(exp, open("omniglot_exp", "wb"));
+ws = np.ma.masked_invalid(ws)
 
-# print(best_arm.parameters);
+cmap = plt.get_cmap('coolwarm')
+cmap.set_bad('black')
+
+fig, axes = plt.subplots(2, 5)
+rand_idx = np.random.randint(0, val_batches*batch_size, size=(10,))
+
+xs = np.arange(0, t_steps);
+ys = np.arange(0, t_steps);
+
+for i in range(10):
+    im = axes[i//5, i%5].pcolormesh(xs, ys, ws[:,rand_idx[i],:], cmap = cmap, edgecolors = None)
+    fig.colorbar(im, ax=axes[i//5, i%5]);
+
+
+
+# %%
