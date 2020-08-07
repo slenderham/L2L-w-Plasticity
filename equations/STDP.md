@@ -1,3 +1,11 @@
+- Conclusions:
+
+  - Backpropagation is not a satisfactory answer to the problem of learning in biological neural networks, while no neuroscientifically motivated learning rules alone (e.g. hebbian learning, STDP) have been shown to succeed in large-scale machine learning problems. Building on previous work on fast-weight networks in machine learning, and taking advantage of auto-diff softwares, we train a gated RNN with a modulated STDP-like plasticity rule. [make network architecture graph]
+  - The augmented plastic network is able to significantly outperform state of the art RNN architectures in the memory intensive meta-learning task of few-shot image classification. Through sensitivity analysis, we show that the network is able to recall the previous occurence of an instance of a image, and identify failed episodes as recall of the false category.  [sensitivty analysis]
+  - Using a meta-reinforcement learning paradigm, we show that the network is able to perform the Wisconsin Card Sorting Task with no explicit task instruction. The weights of the network also evolve in a task dependent manner to different configurations. [LDA, PCA, fixed point?]
+  - In a simulation of forced-choice task in a T-maze, the trained network's modulation signal is significantly correlated with behaviorally relavant variables. We decode a Q-learning rule from the network's behavior, and show that disabling the fast-weights lead to degraded performance and irrational behavior. [plot Q values, remove plasticity then Q-values, significance table]
+  - Together, we show that a simple modification to the traditional RNN architecture is able to drastically increase the capacity of RNN's. More broadly, it verifies the role of synaptic plasticity for both learning and memory. It shows that the paradigm of using auto-diff software and large-scale optimization to model more sophisticated biological processes can be a fruitful one to pursue.
+
 - RNN dynamics
 
 - $$

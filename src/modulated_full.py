@@ -96,8 +96,8 @@ class SGRUCell(torch.nn.Module):
         new_trace_e = (1-r)*trace_e + r*h;
         new_trace_E = (1-s)*trace_E + s*(torch.bmm(new_h.unsqueeze(2), new_trace_e.unsqueeze(1)) - torch.bmm(new_trace_e.unsqueeze(2), new_h.unsqueeze(1)));
         dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
-        upper = torch.relu(self.clip_val-self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/torch.nn.functional.softplus(self.alpha);
-        lower = -torch.relu(self.clip_val+self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/torch.nn.functional.softplus(self.alpha);
+        upper = torch.relu(self.clip_val-self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+        lower = -torch.relu(self.clip_val+self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
         dU = torch.where(dU>upper, upper, dU);
         dU = torch.where(dU<lower, lower, dU);
         
@@ -195,7 +195,7 @@ class SGRU(torch.nn.Module):
             self.label_encoder = torch.nn.Embedding(num_token, input_dim, padding_idx=padding_idx);
         
         if (self.in_type=="image+categorical"):
-            input_dim += 64;
+            input_dim = 64+self.num_token;
         
         inits = {"alpha_init": alpha_init, "tau_U_init": tau_U_init};
 
@@ -233,20 +233,21 @@ class SGRU(torch.nn.Module):
 
         self.reset_parameter();
 
-    def forward(self, x, h, v, dU, trace):
+    def forward(self, x, h, v, dU, trace, **kwargs):
 
         # size of x is seq_len X batch_size X input_dimension
 
         if self.in_type=="categorical":
-            x = embedded_dropout(self.encoder, x, dropout=self.dropout_e if self.training else 0);
+            new_x = embedded_dropout(self.encoder, x, dropout=self.dropout_e if self.training else 0);
         elif self.in_type=="image+categorical":
             time, batch_size, channel, height, width = x[0].shape;
             img = self.img_encoder(x[0].reshape(time*batch_size, channel, height, width)).reshape(time, batch_size, 64);
-            lbl = self.label_encoder(x[1]);
-            x = torch.cat([img, lbl], dim=-1);
-            x = torch.repeat_interleave(x, self.reps, dim=0);
+            lbl = (torch.eye(self.num_token)[x[1]]*math.sqrt(64)).to(img.device)
+            new_x = torch.cat([img, lbl], dim=-1);
+            new_x = torch.repeat_interleave(new_x, self.reps, dim=0);
+            new_x = torch.nn.Parameter(new_x, requires_grad=True);
 
-        prev_out = self.locked_drop(x, self.dropout_i);
+        prev_out = self.locked_drop(new_x, self.dropout_i);
 
         multi_mods = [];
 
@@ -259,7 +260,7 @@ class SGRU(torch.nn.Module):
             else:
                 prev_out = self.locked_drop(prev_out, self.dropout_o);
 
-        return v, h, dU, trace, ({'vals':prev_out, 'keys':keys, 'dicts':dicts}, self.decoder(prev_out));
+        return v, h, dU, trace, ({'vals':prev_out, 'keys':keys, 'dicts':dicts, 'new_x':new_x}, self.decoder(prev_out));
 
     def get_init_states(self, batch_size, device):
         v_0 = [];

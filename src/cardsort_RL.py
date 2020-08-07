@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from lamb import Lamb
 from ppo import PPO, Memory
 import tqdm
+from decomposition import vis_parafac
 
 '''
     simpler WCST
@@ -82,11 +83,11 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # optimizer = optim.SGD(param_groups, lr=1);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
-n_epochs = 50000;
+n_epochs = 0;
 len_seq = 80;
 val_len = 80;
 buffer_size = 50;
-num_samples = 50;
+num_samples = 20;
 
 # data = torch.tensor(ortho_group.rvs(bits), dtype=torch.float, device=device);
 data = torch.eye(bits);
@@ -95,10 +96,10 @@ episode_buffer = Memory();
 cumReward = [];
 
 try:
-  state_dict = torch.load("model_WCST");
-  model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
-  optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
-  cumReward = state_dict["cumReward"];
+    state_dict = torch.load("model_WCST");
+    model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
+    optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+    cumReward = state_dict["cumReward"];
 except:
     print("model failed to load");
 
@@ -171,9 +172,9 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
 
     # update the policy every [buffer_size] steps
     if (i+1)%buffer_size==0:
+        print(cumReward[-1]);
         ppo.update(episode_buffer);
         cumReward.append(torch.mean(torch.as_tensor(episode_buffer.rewards)));
-        print(cumReward[-1]);
         episode_buffer.clear_memory();
         # scheduler1.step();
         torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'cumReward': cumReward}, 'model_WCST');
@@ -183,8 +184,7 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
 state_dict = torch.load("model_WCST");
 print(model.state_dict().keys())
 print(state_dict["model_state_dict"].keys())
-model.load_state_dict(state_dict["model_state_dict"]);
-
+print(model.load_state_dict(state_dict["model_state_dict"]));
 
 dUs = [];
 vs = [];
@@ -218,20 +218,20 @@ with torch.no_grad():
 
             # RNN works with size seq len X batch size X input size, in this case # chunks X 1 X pattern size + |A| + 1
             patterns = torch.cat(
-                  (instrPattern.reshape(chunks, 1, bits), torch.zeros((chunks, 1, val+1), device=device)), dim=2
-                );
+                                    (instrPattern.reshape(chunks, 1, bits), torch.zeros((chunks, 1, val+1), device=device)), dim=2
+                                );
             # feedback from previous trial, 1 X 1 X [0]*pattern_size + previous action + previous reward
             feedback = torch.cat(
-                  (torch.zeros((1, bits), device=device), action.detach(), reward.detach()), dim=1
-                ).reshape(1, 1, bits+val+1);
+                                    (torch.zeros((1, bits), device=device), action.detach(), reward.detach()), dim=1
+                                ).reshape(1, 1, bits+val+1);
 
             total_input = torch.cat(
-                  (feedback, patterns), dim=0
-                );
+                                    (feedback, patterns, torch.zeros(1, 1, bits+val+1)), dim=0
+                                );
             # one iter of network, notice that the reward is from the previous time step
-            for jdx in range(chunks+1):
-                new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value) = model.train().forward(\
-                                  x = total_input[jdx:jdx+1,...].to(device),\
+            for inp in total_input:
+                new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = model.train().forward(\
+                                  x = inp.unsqueeze(0).to(device),\
                                   h = new_h, \
                                   v = new_v, \
                                   dU = new_dU, \
@@ -252,5 +252,14 @@ with torch.no_grad():
 
 print(np.mean(cumReward));
 plt.imshow(cumReward);
+
+vs = torch.stack([torch.cat(v, dim=0) for v in vs], dim=0).transpose(0, 1) # from batch first to timestep first
+vs = vs.reshape((len_seq//20, (chunks+2)*20, *vs.shape[1:]))
+dUs = torch.stack([torch.cat(dU, dim=0) for dU in dUs], dim=0).transpose(0, 1)
+dUs = dUs.reshape((len_seq//20, (chunks+2)*20, *dUs.shape[1:]))
+dims = torch.tensor(dims)
+
+vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
+vis_parafac(dUs.detach().numpy(), rank=3, plot_type='wcst_mat')
 
 # %%
