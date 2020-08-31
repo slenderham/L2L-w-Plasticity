@@ -24,12 +24,12 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, 3*hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 2*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, 3*hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 2*hidden_dim, bias=bias);
 
-        self.lnx = torch.nn.LayerNorm(3*hidden_dim);
-        self.lnh = torch.nn.LayerNorm(3*hidden_dim);
+        self.lnx = torch.nn.LayerNorm(2*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(2*hidden_dim);
 
         self.h2mod = torch.nn.Linear(hidden_dim, mod_rank, bias=bias);
 
@@ -45,7 +45,7 @@ class SGRUCell(torch.nn.Module):
             self.act = Swish();
         # strength of weight modification
         self.alpha = torch.nn.Parameter(-4.0*torch.ones(1));
-        self.mod2h = torch.nn.Linear(mod_rank, 2);
+        self.mod2h = torch.nn.Linear(mod_rank, 3);
 
         # time constant of STDP weight modification
         self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
@@ -75,21 +75,21 @@ class SGRUCell(torch.nn.Module):
         # preactivations
         Wx = self.lnx(self.x2h(x));
         Wh = self.h2h(h);
-        Wh[:, 2*self.hidden_dim:3*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
+        Wh[:, 1*self.hidden_dim:2*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
         Wh = self.lnh(Wh);
 
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        z, r, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
+        z, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim], dim=-1);
 
         z = torch.sigmoid(z);
-        r = torch.sigmoid(r);
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
 
         mod = self.mod2h(self.act(self.h2mod(new_h)));
-        s, m = torch.split(mod, [1, 1], dim=-1);
+        r, s, m = torch.split(mod, [1, 1, 1], dim=-1);
+        r = torch.sigmoid(r);
         s = torch.sigmoid(s).unsqueeze(-1);
         m = (m).unsqueeze(-1);
 
@@ -106,10 +106,10 @@ class SGRUCell(torch.nn.Module):
     def reset_parameter(self):
         for name, param in self.named_parameters():
             if "h2h.weight" in name:
-                for i in range(3):
+                for i in range(2):
                     torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.weight" in name:
-                for i in range(3):
+                for i in range(2):
                     torch.nn.init.xavier_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.bias" in name:
                 torch.nn.init.zeros_(param);
@@ -122,7 +122,7 @@ class SGRUCell(torch.nn.Module):
             elif "h2mod.bias" in name:
                 torch.nn.init.zeros_(param);
             elif "mod2h.weight" in name:
-                for i in range(2):
+                for i in range(3):
                     torch.nn.init.kaiming_normal_(param[i:i+1,:], nonlinearity="relu");
             elif "mod2h.bias" in name:
                 torch.nn.init.zeros_(param);

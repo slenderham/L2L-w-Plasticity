@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 from lamb import Lamb
 from ppo import PPO, Memory
 import tqdm
-from decomposition import vis_parafac
+from decomposition import *
 
 '''
     simpler WCST
@@ -110,8 +110,6 @@ ppo = PPO(policy = model, \
          );
 
 for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
-
-
     # initialize loss and reward
     reward = torch.zeros(1, 1, device=device);
     new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=1, device=device);
@@ -185,9 +183,10 @@ state_dict = torch.load("model_WCST");
 print(model.state_dict().keys())
 print(state_dict["model_state_dict"].keys())
 print(model.load_state_dict(state_dict["model_state_dict"]));
+# model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
 
 dUs = [];
-vs = [];
+hs = [];
 dims = [];
 cumReward = [];
 with torch.no_grad():
@@ -195,7 +194,7 @@ with torch.no_grad():
     for j in range(num_samples):
 
         dUs.append([]);
-        vs.append([]);
+        hs.append([]);
         dims.append([]);
         cumReward.append([]);
 
@@ -237,7 +236,7 @@ with torch.no_grad():
                                   dU = new_dU, \
                                   trace = new_trace);
                 dUs[-1].append(new_dU[0]);
-                vs[-1].append(new_v[0]);
+                hs[-1].append(new_h[0]);
                 dims[-1].append(newDim);
 
             # sample an action
@@ -252,14 +251,23 @@ with torch.no_grad():
 
 print(np.mean(cumReward));
 plt.imshow(cumReward);
+plt.xlabel('Intra-Episode Timestep')
+plt.ylabel('Episodes')
+plt.title('Errors in Episodes of WCST')
+plt.show()
 
-vs = torch.stack([torch.cat(v, dim=0) for v in vs], dim=0).transpose(0, 1) # from batch first to timestep first
-vs = vs.reshape((len_seq//20, (chunks+2)*20, *vs.shape[1:]))
+hs = torch.stack([torch.cat(h, dim=0) for h in hs], dim=0).transpose(0, 1) # from batch first to timestep first
+# vs = vs.reshape((len_seq//20, (chunks+2)*20, *vs.shape[1:]))
 dUs = torch.stack([torch.cat(dU, dim=0) for dU in dUs], dim=0).transpose(0, 1)
-dUs = dUs.reshape((len_seq//20, (chunks+2)*20, *dUs.shape[1:]))
-dims = torch.tensor(dims)
+# dUs = dUs.reshape((len_seq//20, (chunks+2)*20, *dUs.shape[1:]))
+dims = torch.tensor(dims).long()
+# vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
+# vis_parafac(dUs.detach().numpy(), rank=3, plot_type='wcst_mat')
 
-vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
-vis_parafac(dUs.detach().numpy(), rank=3, plot_type='wcst_mat')
-
-# %%
+axe = vis_lda(hs.flatten(0,1), dims.flatten());
+axe.set_title("LDA of Cell State")
+plt.show()
+axe = vis_lda(dUs.flatten(2,3).flatten(0,1), dims.flatten());
+axe.set_title("LDA of Fast Weight")
+plt.show()
+# vis_lda((model.rnns[0].h2h.weight[2*64:3*64,:]+torch.nn.functional.softplus(model.rnns[0].alpha)*dUs).detach().flatten(2,3).flatten(0,1), dims.flatten());

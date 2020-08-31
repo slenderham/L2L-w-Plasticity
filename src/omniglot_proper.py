@@ -11,15 +11,15 @@ from tqdm import tqdm
 from PIL import Image
 from lamb import Lamb
 import pickle
-# from decomposition import calculateAttention, vis_parafac
+from decomposition import calculateAttention, vis_parafac
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize, RandomAffine
 from torchmeta.utils.data import BatchMetaDataLoader
 
-# seed=randint(0, 100);
-seed=86;
+seed=randint(0, 100);
+# seed=83;
 print(seed);
 torch.manual_seed(seed);
 np.random.seed(seed);
@@ -61,11 +61,11 @@ def offset(batch):
 
     return [inputs_img, inputs_target], test_targets.to(device).transpose(0, 1)[test_idx, torch.arange(batch_size)] # -> batch_size X 1
 
-batch_size = 16;
+batch_size = 1;
 ways = 20;
 shots = 1;
 img_size = 28;
-train_batches = 1000000;
+train_batches = 1;
 val_batches = 1;
 
 if torch.cuda.is_available():
@@ -269,21 +269,21 @@ def train_eval(params):
             if (i%10==0):
                 print(i)
             
-            o_sq = o.pow(2).mean();
-            h_sq = h.pow(2).mean();
-            dU_sq = dU.pow(2).mean();
+            o_sq = o.sum();
+            h_sq = h.sum();
+            dU_sq = dU.sum();
             
             grad_o = torch.autograd.grad(o_sq, last_layer_out['new_x'], retain_graph=True);
-            im_grad.append(grad_o[0][:,:,:64].pow(2).mean(-1))
-            lb_grad.append(grad_o[0][:,:,64:].pow(2).mean(-1))
+            im_grad.append(grad_o[0][:,:,:64].pow(2).sum(-1))
+            lb_grad.append(grad_o[0][:,:,64:].pow(2).sum(-1))
 
             grad_h = torch.autograd.grad(h_sq, last_layer_out['new_x'], retain_graph=True);
-            im_grad_h.append(grad_o[0][:,:,:64].pow(2).mean(-1))
-            lb_grad_h.append(grad_o[0][:,:,64:].pow(2).mean(-1))
+            im_grad_h.append(grad_o[0][:,:,:64].pow(2).sum(-1))
+            lb_grad_h.append(grad_o[0][:,:,64:].pow(2).sum(-1))
 
             grad_dU = torch.autograd.grad(dU_sq, last_layer_out['new_x'], retain_graph=True);
-            im_grad_dU.append(grad_o[0][:,:,:64].pow(2).mean(-1))
-            lb_grad_dU.append(grad_o[0][:,:,64:].pow(2).mean(-1))
+            im_grad_dU.append(grad_o[0][:,:,:64].pow(2).sum(-1))
+            lb_grad_dU.append(grad_o[0][:,:,64:].pow(2).sum(-1))
 
         im_grad = torch.stack(im_grad, dim=0);
         lb_grad = torch.stack(lb_grad, dim=0);
@@ -328,42 +328,46 @@ rand_idx = np.random.choice(list(range(batch_size*val_batches)), size=(1,), repl
 
 fig, axes = plt.subplots(2, 3);
 
-
 xs = np.arange(0, t_steps);
 ys = np.arange(0, t_steps);
 
-cmap = plt.get_cmap('binary')
+cmap = plt.get_cmap('Greys')
 plt.rcParams.update({'font.size': 6})
 
 im = axes[0][0].pcolor(xs, ys, torch.log(ims_grad[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[0][0]);
 axes[0][0].xaxis.tick_top();
-axes[0][0].set_title(r"$\partial output/\partial image$")
+axes[0][0].set_title(r"$\log||\partial output_i/\partial image_j||_2^2$")
 
 im = axes[1][0].pcolor(xs, ys, torch.log(lbs_grad[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[1][0]);
 axes[1][0].xaxis.tick_top();
-axes[1][0].set_title(r"$\partial output/\partial label$")
+axes[1][0].set_title(r"$\log||\partial output_i/\partial label_j||_2^2$")
 
 im = axes[0][1].pcolor(xs, ys, torch.log(ims_grad_h[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[0][1]);
 axes[0][1].xaxis.tick_top();
-axes[0][1].set_title(r"$\partial h/\partial image$")
+axes[0][1].set_title(r"$\log||\partial h_i/\partial image_j||_2^2$")
 
 im = axes[1][1].pcolor(xs, ys, torch.log(lbs_grad_h[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[1][1]);
 axes[1][1].xaxis.tick_top();
-axes[1][1].set_title(r"$\partial h/\partial label$")
+axes[1][1].set_title(r"$\log||\partial h_i/\partial label_j||_2^2$")
 
 im = axes[0][2].pcolor(xs, ys, torch.log(ims_grad_dU[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[0][2]);
 axes[0][2].xaxis.tick_top();
-axes[0][2].set_title(r"$\partial dU/\partial image$")
+axes[0][2].set_title(r"$\log||\partial dU_i/\partial image_j||_2^2$")
 
 im = axes[1][2].pcolor(xs, ys, torch.log(lbs_grad_dU[:,:,rand_idx]).squeeze(), cmap=cmap, lw=0.0, edgecolors = 'k', shading='auto')
 fig.colorbar(im, ax=axes[1][2]);
 axes[1][2].xaxis.tick_top();
-axes[1][2].set_title(r"$\partial dU/\partial label$")
+axes[1][2].set_title(r"$\log||\partial dU_i/\partial label_j||_2^2$")
+
+for ax_row in axes:
+    for ax in ax_row:
+        ax.set_xlabel('j')
+        ax.set_ylabel('i');
 
 
 print(train_labels[:,rand_idx])
@@ -372,7 +376,7 @@ idx = (np.argwhere(train_labels[:,rand_idx].squeeze().numpy()==test_labels[rand_
 choice_idx = (np.argwhere(train_labels[:,rand_idx].squeeze().numpy()==test_pred[rand_idx].squeeze().numpy())).item()
 fig.suptitle(f'Sensitivity w.r.t. input. \nCorrect image presented at steps {idx*4} to {idx*4+3}. \nChose image presented at steps {choice_idx*4} to {choice_idx*4+3}')
 fig.tight_layout()
-
+fig.savefig('sensitivity.png',dpi=300)
 fig.show()
 
 '''

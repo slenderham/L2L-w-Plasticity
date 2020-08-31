@@ -11,6 +11,7 @@ import tqdm
 from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
+from tabulate import tabulate
 # %matplotlib inline
 
 torch.manual_seed(0);
@@ -67,8 +68,9 @@ maze = TMaze(height = 4,
 # try:
 state_dict = torch.load("model_maze", map_location=device);
 model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
-# optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
 cumReward = state_dict["cumReward"];
+# model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
 print("model loaded successfully")
 # except:
     # print("model failed to load");
@@ -206,12 +208,20 @@ mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 feats = trajectory.get_feats(Qls, Qrs);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
-print(dictvec.feature_names_)
+
+plt.plot
+
+headers = ['Location', "intercept"]
+headers.extend(dictvec.feature_names_);
+results_to_print = [];
 for k in results.keys():
-    print(k)
-    print(['{:.4f}'.format(f) for f in results[k][0].pvalues])
-    print(['{:.4f}'.format(f) for f in results[k][0].params])
-    
+    results_to_print.append([k]);
+    results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
+print(tabulate(results_to_print, headers=headers, tablefmt="github"))
+
+# for k in results.keys():
+#     print(k)
+#     print(results[k][0].summary())
 
 # h2modweight = model.rnns[0].mod2h.weight[1].flatten().detach().numpy();
 

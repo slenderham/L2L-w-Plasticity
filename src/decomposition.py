@@ -153,3 +153,16 @@ def vis_pca(x, tags=None):
     axe.plot(low_x[:,0], low_x[:,1], low_x[:,2],alpha=0.1, c='black');
     plt.figure().tight_layout();
     plt.show();
+
+def vis_lda(x, tags):
+    lda = LinearDiscriminantAnalysis();
+    low_x = lda.fit_transform(x, tags);
+    axe = plt.figure().add_subplot(111)
+    scatter = axe.scatter(low_x[:,0], low_x[:,1], c=tags, alpha=0.5);
+    axe.plot(low_x[:,0], low_x[:,1], alpha=0.1, c='black');
+    legend = axe.legend(*scatter.legend_elements(), title="Task Type");
+    axe.add_artist(legend)
+    plt.figure().tight_layout();
+    axe.set_xlabel('LD1')
+    axe.set_ylabel('LD2')
+    return axe;

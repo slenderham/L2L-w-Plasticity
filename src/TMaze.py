@@ -7,6 +7,7 @@ from fitQ import fitQ, loglikelihood
 from sklearn.feature_extraction import DictVectorizer
 import statsmodels.api as sm
 from collections import defaultdict
+import pandas as pd
 
 # delay (door closed, bridge closed, no living penalty) 
 # -delay time up-> bridge open, door still closed 
@@ -339,7 +340,9 @@ class Trajectories:
                     feats[self.maze.mirror_positions[pos[t][j]]].append({
                         "prev_outcome": outcomes[t][i],
                         "prev_choice": 1.0 if choices[t][i]=="left" else 0.0,
+                        "choice_X_outcome": outcomes[t][i] * (1.0 if choices[t][i]=="left" else 0.0),
                         "q_prev_c": Qls[t][i] if choices[t][i]=="left" else Qrs[t][i],
+                        "rpe": outcomes[t][i]-(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
                         "upcoming_choice": 1.0 if choices[t][i+1]=="left" else 0.0,
                         "q_upcoming_choice": Qls[t][i+1] if choices[t][i+1]=="left" else Qrs[t][i+1],
                         "qsum": Qls[t][i+1]+Qrs[t][i+1],
@@ -367,11 +370,14 @@ class Trajectories:
 
         dictvec = DictVectorizer(sort=False, sparse=False);
         feat_fit = dictvec.fit(all_feats);
+        headers = ['Intercept']
+        headers.extend(dictvec.feature_names_);
 
         feats_flat = {};
         for k, v in feats.items():
             feats_flat[k] = feat_fit.transform(v);
             feats_flat[k] = sm.add_constant(feats_flat[k], prepend=True, has_constant="raise");
+            feats_flat[k] = pd.DataFrame(feats_flat[k], columns=headers)
 
         results = defaultdict(list);
 
