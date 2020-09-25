@@ -108,10 +108,8 @@ def offset(batch):
     phase_ind = phase_ind.transpose(0, 1)
 
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
-    is_blank_image = outcomes_total!=0;
-    is_blank_image[-num_repeats:] = True;
 
-    return [train_inputs_shuff, 8*torch.cat([phase_ind, outcomes_total], dim=-1)], is_blank_image, bonus_round_novel_outcome_idx
+    return [train_inputs_shuff, 8*torch.cat([phase_ind, outcomes_total], dim=-1)], bonus_round_novel_outcome_idx
 
 batch_size = 50;
 num_pics = 3;
@@ -124,7 +122,7 @@ assert(len(freqs)==num_pics)
 assert(all([freqs[i]>=freqs[i+1] for i in range(num_pics-1)]));
 img_size = 28;
 train_batches = 1e6;
-val_batches = 100;
+val_batches = 50;
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -178,10 +176,7 @@ model = SGRU(in_type = "image+categorical",\
 
 param_groups = add_weight_decay(model);
 
-optimizer = optim.AdamW(param_groups, lr=lr, betas=(0.9, 0.99), eps=1e-4);
-scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20000, gamma=0.5)
-
-criterion = torch.nn.NLLLoss();
+optimizer = optim.AdamW(param_groups, lr=lr);
 
 loss = 0;
 trainLoss = 0;
@@ -235,7 +230,7 @@ for idx, batch in tqdm(train_iter, position=0):
                                                                                 trace = new_trace);
 
         # sample an action
-        log_probs = output[-2:-num_pics*num_repeats:-num_repeats-1]; # should be num_pics X batch_size X 1
+        log_probs = output[-num_repeats:-(num_pics+1)*num_repeats:-num_repeats]; # should be num_pics X batch_size X 1
         log_probs = log_probs.squeeze(-1).t();
         log_probs = torch.nn.functional.log_softmax(log_probs);
 
@@ -252,59 +247,39 @@ for idx, batch in tqdm(train_iter, position=0):
         episode_buffer.values[-1].append(value[-1]);
 
     # update the policy every [buffer_size] steps
-    if (idx+1)%batch_size==0:
-        print(cumReward[-1]);
-        ppo.update(episode_buffer);
-        cumReward.append(torch.mean(torch.as_tensor(episode_buffer.rewards)));
-        episode_buffer.clear_memory();
-        # scheduler1.step();
-        torch.save({'model_state_dict': model.state_dict(), \
-                    'optimizer_state_dict': optimizer.state_dict(), \
-                    'cumReward': cumReward}, 'model_one_shot');
-
-    loss = criterion(output[-1], label);
-    trainLoss += loss.item()/100;
-    trainShotAcc += torch.mean(torch.as_tensor(torch.argmax(output[-1], dim=1)==label, dtype=torch.float))/100;
-    loss.backward(); #model.scale_grad();
-    # for n, p in model.named_parameters():
-    #     print(n, torch.norm(p.grad));
-    torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), clip);
-    optimizer.step();
-    optimizer.zero_grad();
-    scheduler1.step();
-    # scheduler2.step();
-
-    if (torch.isnan(loss)):
-        raise ValueError("Loss is NaN");
+    ppo.update(episode_buffer, num_pics=num_pics, num_repeats=num_repeats);
+    episode_buffer.clear_memory();
+    # scheduler1.step();
 
     if (idx+1)%100==0:
-        print(trainLoss, trainShotAcc);
-        trainLoss = 0;
-        trainShotAcc = 0;
-        if (not torch.isnan(loss)): 
-            torch.save({'model_state_dict': model.state_dict(), 
-                'optimizer_state_dict': optimizer.state_dict(), 
-                'val_errors': val_errors,
-                'last_batch': idx+1}, 
-                'model_omniglot');
-
-        valLoss = 0;
-        valShotAccuracy = 0;
         with torch.no_grad():
+            valReward = 0;
             for jdx, batch in tqdm(val_iter, position=0):
-                input_total, label = offset(batch);
+                input_total, is_blank_image, bonus_round_novel_outcome_idx = offset(batch);
                 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
-                new_v, new_h, new_dU, new_trace, (last_layer_out, output) = model.eval().forward(\
-                                                                                    x = input_total,\
-                                                                                    h = new_h, \
-                                                                                    v = new_v, \
-                                                                                    dU = new_dU, \
-                                                                                    trace = new_trace);
-                valLoss += criterion(output[-1], label)/50;
-                valShotAccuracy += torch.mean(torch.as_tensor(torch.argmax(output[-1], dim=1)==label, dtype=torch.float))/50;
+                new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
+                                                                                        x = input_total,\
+                                                                                        h = new_h, \
+                                                                                        v = new_v, \
+                                                                                        dU = new_dU, \
+                                                                                        trace = new_trace);
+
+                # sample an action
+                log_probs = output[-num_repeats:-(num_pics+1)*num_repeats:-num_repeats]; # should be num_pics X batch_size X 1
+                log_probs = log_probs.squeeze(-1).t();
+                log_probs = torch.nn.functional.log_softmax(log_probs);
+
+                m = torch.distributions.Categorical(logits = log_probs[-1]);
+                action_idx = m.sample();
+
+                # get reward
+                reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).float();
+                valReward += reward/val_batches/batch_size;
                 if ((jdx+1)%50==0):
-                    print(valLoss, valShotAccuracy);
-                    val_errors.append(valShotAccuracy.item());
+                    cumReward.append();
+                    torch.save({'model_state_dict': model.state_dict(), \
+                                'optimizer_state_dict': optimizer.state_dict(), \
+                                'cumReward': cumReward}, 'model_one_shot');
                     break;
 
     if (idx+1)%train_batches==0:
