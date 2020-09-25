@@ -12,7 +12,8 @@ from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
-# %matplotlib inline
+from decomposition import forbenius_norm, vis_lda, vis_pca
+# %matplotlib qt
 
 torch.manual_seed(0);
 np.random.seed(0);
@@ -52,7 +53,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5);
 
 train_epochs = 0;
-val_epochs = 50;
+val_epochs = 10;
 buffer_size = 50;
 num_samples = 50;
 max_steps = 600;
@@ -125,7 +126,7 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
             obs, reward, done, info = maze.step(action_idx.item());
 
             episode_buffer.actions[-1].append(action_idx);
-            episode_buffer.states[-1].append(total_input); # batch_size, trial number, within trial time step, 1, input_dim
+            episode_buffer.states[-1].append(total_input); # batch_size(1), trial number, within trial time step, 1, input_dim
             episode_buffer.logprobs[-1].append(m.log_prob(action_idx));
             episode_buffer.rewards[-1].append(reward);
             episode_buffer.values[-1].append(value[-1]);
@@ -163,7 +164,7 @@ def evaluate():
         obs = maze._get_obs();
         done = False;
         trajectory.add_new_episode();
-        states.append([]);
+        states.append([[new_v[0], new_dU[0], torch.zeros(1, 16), torch.zeros(1, 1), torch.zeros(1, 1)]]);
 
         with torch.no_grad():
             while(not done):
@@ -208,16 +209,20 @@ mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 feats = trajectory.get_feats(Qls, Qrs);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
+axe = vis_pca(torch.tensor(vs).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+axe.set_title("PCA of Cell State")
+plt.show()
+axe = vis_pca(torch.tensor(dUs).flatten(2,3).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+axe.set_title("PCA of Fast Weight")
+plt.show()
 
-plt.plot
-
-headers = ['Location', "intercept"]
-headers.extend(dictvec.feature_names_);
-results_to_print = [];
-for k in results.keys():
-    results_to_print.append([k]);
-    results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
-print(tabulate(results_to_print, headers=headers, tablefmt="github"))
+# headers = ['Location', "intercept"]
+# headers.extend(dictvec.feature_names_);
+# results_to_print = [];
+# for k in results.keys():
+#     results_to_print.append([k]);
+#     results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
+# print(tabulate(results_to_print, headers=headers, tablefmt="github"))
 
 # for k in results.keys():
 #     print(k)

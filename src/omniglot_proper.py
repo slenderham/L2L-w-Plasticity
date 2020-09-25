@@ -144,17 +144,18 @@ def train_eval(params):
     last_batch = 0;
     val_errors = [];
 
-    try:
-        state_dict = torch.load("model_omniglot", map_location=device);
-        model.load_state_dict(state_dict["model_state_dict"]);
-        optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
-        val_errors = state_dict['val_errors'];
-        last_batch = state_dict['last_batch'];print(last_batch);
-        scheduler1.step(last_batch);
-        # model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
-        print("model loaded successfully");
-    except:
-        print("model failed to load");
+    # try:
+    #     state_dict = torch.load("model_omniglot", map_location=device);
+    #     state_dict["model_state_dict"].pop('label_encoder.weight')
+    #     print(model.load_state_dict(state_dict["model_state_dict"]));
+    #     # optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+    #     val_errors = state_dict['val_errors'];print(val_errors[-1])
+    #     last_batch = state_dict['last_batch'];print(last_batch);
+    #     scheduler1.step(last_batch);
+    #     print(model.rnns[0].alpha)
+    #     print("model loaded successfully");
+    # except:
+        # print("model failed to load");
 
     print(model);
     print(optimizer);
@@ -378,6 +379,21 @@ fig.suptitle(f'Sensitivity w.r.t. input. \nCorrect image presented at steps {idx
 fig.tight_layout()
 fig.savefig('sensitivity.png',dpi=300)
 fig.show()
+
+idxes = np.argwhere(train_labels.squeeze().numpy()==test_labels.squeeze().numpy());
+idxes = np.repeat(idxes, 4, axis=1);
+zero_to_three = np.tile(np.arange(4), repeats=(batch_size*val_batches, 21));
+choice_idxes = np.argwhere(train_labels.squeeze().numpy()==test_pred.squeeze().numpy());
+true_pos = np.array([x for x in set(tuple(x) for x in idxes) & set(tuple(x) for x in choice_idxes)])
+false_neg = np.array([x for x in set(tuple(x) for x in idxes) - set(tuple(x) for x in choice_idxes)])
+false_pos = np.array([x for x in set(tuple(x) for x in choice_idxes) - set(tuple(x) for x in idxes)])
+all_idxes = np.array([x for x in set(tuple(x) for x in idxes) | set(tuple(x) for x in choice_idxes)])
+
+fig, axe = plt.subplot(111);
+axe.hist(ims_grad[0][true_pos].log().flatten(), alpha=0.5, label='True Positive', density=True)
+axe.hist(ims_grad[0][false_neg].log().flatten(), alpha=0.5, label='False Negative', density=True)
+axe.hist(ims_grad[0][false_pos].log().flatten(), alpha=0.5, label='False Positive', density=True)
+axe.hist(np.delete(ims_grad[0], all_idxes).log().flatten(), alpha=0.5, label='Unrelated Images', density=True)
 
 '''
 Calculate Attention as a linear combination of previous states

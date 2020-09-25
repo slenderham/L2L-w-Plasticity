@@ -37,9 +37,21 @@ class PPO:
         self.optimizer = optimizer;
         self.value_loss = torch.nn.MSELoss();
     
-    def update(self, memory, task='cardsort'):   
-        rewards = torch.as_tensor(memory.rewards).to(device).detach().t();
-        values = torch.as_tensor(memory.values).to(device).detach().t();
+    def update(self, memory, task='cardsort', **kwargs):   
+        if task=='one_shot':
+            rewards = memory.rewards[0];
+            values = memory.values[0];
+            old_states = memory.states[0];
+            old_actions = memory.actions[0];
+            old_logprobs = memory.logprobs[0];
+        else:
+            # both should be of shape trials X batch size
+            rewards = torch.as_tensor(memory.rewards).to(device).detach().t();
+            values = torch.as_tensor(memory.values).to(device).detach().t();
+            # this should be of size trials X intra-trial-timesteps X batch size 
+            old_states = torch.stack([torch.stack(m) for m in memory.states]).to(device).detach().transpose(0,3).squeeze(0);
+            old_actions = torch.as_tensor(memory.actions).to(device).detach().t()
+            old_logprobs = torch.as_tensor(memory.logprobs).to(device).detach().t();
 
         # calculate advantages
         returns = torch.zeros(self.seq_len, self.buffer_size).to(device);
@@ -52,12 +64,8 @@ class PPO:
             returns[-idx] = A + values[-idx];
 
         # Normalizing the rewards:
-        returns = (returns - returns.mean()) / (returns.std() + 1e-5);
-        
-        # convert list to tensor
-        old_states = torch.stack([torch.stack(m) for m in memory.states]).to(device).detach().transpose(0,3).squeeze(0);
-        old_actions = torch.as_tensor(memory.actions).to(device).detach().t()
-        old_logprobs = torch.as_tensor(memory.logprobs).to(device).detach().t();
+        advantages = returns-values;
+        advatanges = (advantages - advantages.mean()) / (advantages.std() + 1e-5);
         
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):
@@ -65,14 +73,21 @@ class PPO:
             new_h, new_v, new_dU, new_trace = self.policy.get_init_states(batch_size=self.buffer_size, device=device);
             loss = 0;
             # for each timestep, give a batch of old observations
-            for s, a, r, old_log_prob in zip(old_states, old_actions, returns, old_logprobs):
+            for s, a, r, adv, old_log_prob in zip(old_states, old_actions, returns, advantages, old_logprobs):
                 new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = self.policy.train().forward(\
                                                       x = s.to(device),\
                                                       h = new_h, \
                                                       v = new_v, \
                                                       dU = new_dU, \
                                                       trace = new_trace);
-                m = torch.distributions.Categorical(logits = log_probs[-1]);
+                if task=='ont_shot':
+                    log_probs = log_probs[-2:-kwargs['num_pics']*kwargs['num_repeats']:-kwargs['num_repeats']-1]; # should be num_pics X batch_size X 1
+                    log_probs = log_probs.squeeze(-1).t();
+                    log_probs = torch.nn.functional.log_softmax(log_probs);
+                else:
+                    log_probs = log_probs[-1];
+
+                m = torch.distributions.Categorical(logits = log_probs);
                 # calculate entropy loss
                 dist_entropy = m.entropy().mean();
                 # calculate new policy, size = (batch,)
@@ -80,8 +95,6 @@ class PPO:
             
                 # Finding the ratio (pi_theta / pi_theta__old), 
                 ratios = torch.exp(logprobs - old_log_prob.detach());
-
-                adv = r - value[-1].squeeze().detach();
 
                 # Finding Surrogate Loss:
                 surr1 = ratios * adv;

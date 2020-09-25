@@ -23,9 +23,9 @@ import pandas as pd
 # 1 0 0 D 0 0 1
 # 1 1 1 1 1 1 1 
 
-class Stage(enum.Enum):
-    APPROACH = 1;
-    RETURN = 2;
+class Stage(enum.IntEnum):
+    APPROACH = 0;
+    RETURN = 1;
 
 class TMaze:
     def __init__(self, height, width, max_steps, switch_after, obs_window_size=1):
@@ -62,8 +62,6 @@ class TMaze:
                 self.mirror_positions[x] = (x[0], 2*self.width+2-x[1]);
             else:
                 self.mirror_positions[x] = x;
-
-        print(self.mirror_positions);
 
         self.agentpos = self.origin.copy(); # initialize at bottom of maze
         self.t = 0; # time within each trial
@@ -144,7 +142,8 @@ class TMaze:
              "origin": np.array_equal(self.agentpos, self.origin), \
              "stage": self.stage,\
              "which_goal": which_goal,\
-             "rewarded": rewarded}
+             "rewarded": rewarded,\
+             "which_task": self.all_goal_probs.index(self.goal_probs)}
 
     def reset(self):
         self.agentpos = self.origin.copy(); # initialize at bottom of maze
@@ -230,7 +229,7 @@ class Trajectories:
         self.maze = maze;
     
     def add_info(self, info):
-        assert(set(("pos", "choice_point", "origin", "which_goal", "stage", "rewarded"))==info.keys());
+        assert(set(("pos", "choice_point", "origin", "which_goal", "stage", "rewarded", "which_task"))==info.keys());
         self.traj[-1].append(info);
     
     def add_new_episode(self):
@@ -240,7 +239,8 @@ class Trajectories:
              "origin": True, \
              "stage": Stage.APPROACH,\
              "which_goal": None,\
-             "rewarded": False
+             "rewarded": False,\
+             "which_task": self.maze.all_goal_probs.index(self.maze.goal_probs),\
         }]);
     
     def reset(self):
@@ -324,6 +324,23 @@ class Trajectories:
             for i in range(len(t)):
                 pos_encoded[-1].append(self.maze.encode_pos(t[i]["pos"]));
         return pos_encoded;
+
+    def get_task(self):
+        tasks = [];
+        for t in self.traj:
+            tasks.append([]);
+            for i in range(len(t)):
+                tasks[-1].append(t[i]["which_task"]);
+        return tasks;
+
+    def get_stage(self):
+        stgs = [];
+        for t in self.traj:
+            stgs.append([]);
+            for i in range(len(t)):
+                stgs[-1].append(int(t[i]["stage"]));
+        return stgs;
+
 
     def get_feats(self, Qls, Qrs):
         '''

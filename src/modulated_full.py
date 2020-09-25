@@ -51,31 +51,32 @@ class SGRUCell(torch.nn.Module):
         self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
         self.reset_parameter();
 
-    def forward(self, x, h, v, dU, trace):
+    def forward(self, x, h, v, dU, trace, **kwargs):
         curr_out = [];
         mods = [];
         keys = [];
         dicts = [];
-        for c in range(x.shape[0]):
-            v, h, dU, trace, mod = self._forward_step(x[c], h, v, dU, trace);
+        freeze_fw_steps = kwargs.get('freeze_fw_steps', None);
+        for i, c in enumerate(x):
+            v, h, dU, trace, mod = self._forward_step(c, h, v, dU, trace, freeze_fw=freeze_fw_steps[i] if freeze_fw_steps is not None else False);
             curr_out.append(h);
             mods.append(mod);
             keys.append(trace[0]);
             dicts.append(dU);
         return v, h, dU, trace, torch.stack(curr_out), torch.stack(mods), torch.stack(keys), torch.stack(dicts);
 
-    def _forward_step(self, x, h, v, dU, trace):
+    def _forward_step(self, x, h, v, dU, trace, **kwargs):
+        freeze_fw = kwargs.get('freeze_fw', False);
         trace_e, trace_E = trace;
 
         # Wx = self.x2h(x);
         # Wh = self.h2h(h);
         # Wh[:, 2*self.hidden_dim:3*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
 
-
         # preactivations
         Wx = self.lnx(self.x2h(x));
         Wh = self.h2h(h);
-        Wh[:, 2*self.hidden_dim:3*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
+        Wh[:, -self.hidden_dim:] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
         Wh = self.lnh(Wh);
 
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
@@ -88,18 +89,21 @@ class SGRUCell(torch.nn.Module):
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
 
-        mod = self.mod2h(self.act(self.h2mod(new_h)));
-        s, m = torch.split(mod, [1, 1], dim=-1);
-        s = torch.sigmoid(s).unsqueeze(-1);
-        m = (m).unsqueeze(-1);
+        if (not freeze_fw):
+            mod = self.mod2h(self.act(self.h2mod(new_h)));
+            s, m = torch.split(mod, [1, 1], dim=-1);
+            s = torch.sigmoid(s).unsqueeze(-1);
+            m = (m).unsqueeze(-1);
 
-        new_trace_e = (1-r)*trace_e + r*h;
-        new_trace_E = (1-s)*trace_E + s*(torch.bmm(new_h.unsqueeze(2), new_trace_e.unsqueeze(1)) - torch.bmm(new_trace_e.unsqueeze(2), new_h.unsqueeze(1)));
-        dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
-        upper = torch.relu(self.clip_val-self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
-        lower = -torch.relu(self.clip_val+self.h2h.weight[2*self.hidden_dim:3*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
-        dU = torch.where(dU>upper, upper, dU);
-        dU = torch.where(dU<lower, lower, dU);
+            new_trace_e = (1-r)*trace_e + r*h;
+            new_trace_E = (1-s)*trace_E + s*(torch.bmm(new_h.unsqueeze(2), new_trace_e.unsqueeze(1)) - torch.bmm(new_trace_e.unsqueeze(2), new_h.unsqueeze(1)));
+            dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
+            upper = torch.relu(self.clip_val-self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            lower = -torch.relu(self.clip_val+self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            dU = torch.where(dU>upper, upper, dU);
+            dU = torch.where(dU<lower, lower, dU);
+        else:
+            mod = 0;
         
         return v, new_h, dU, (new_trace_e, new_trace_E), mod;
 
@@ -203,7 +207,7 @@ class SGRU(torch.nn.Module):
 
         if (self.tie_weight):
             for i in range(1, num_layers-1):
-                self.rnns.append(SGRUCell(input_dim=hidden_dim, hidden_dim=hidden_dim, activation=activation, mod_rank=mod_rank, inits=init, sclip_val=clip_val));
+                self.rnns.append(SGRUCell(input_dim=hidden_dim, hidden_dim=hidden_dim, activation=activation, mod_rank=mod_rank, inits=inits, clip_val=clip_val));
             self.rnns.append(SGRUCell(input_dim=hidden_dim, hidden_dim=input_dim, activation=activation, mod_rank=mod_rank, inits=inits, clip_val=clip_val));
         else:
             for i in range(1, num_layers):
@@ -223,7 +227,7 @@ class SGRU(torch.nn.Module):
             else:
                 self.decoder = torch.nn.Sequential(torch.nn.Linear(hidden_dim, out_dim), torch.nn.LogSoftmax(dim=2));
         else:
-            self.decoder = torch.nn.Sequential(torch.nn.Linear(hidden_dim, out_dim), torch.nn.LogSigmoid(dim=2));
+            self.decoder = torch.nn.Sequential(torch.nn.Linear(hidden_dim, out_dim), torch.nn.LogSigmoid());
 
         self.num_layers = num_layers;
 
@@ -251,7 +255,7 @@ class SGRU(torch.nn.Module):
         multi_mods = [];
 
         for l, rnn in enumerate(self.rnns):
-            v[l], h[l], dU[l], trace[l], prev_out, mods, keys, dicts = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l]);
+            v[l], h[l], dU[l], trace[l], prev_out, mods, keys, dicts = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l], **kwargs);
             multi_mods.append(mods);
 
             if l!=self.num_layers-1:

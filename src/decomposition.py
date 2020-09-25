@@ -18,20 +18,22 @@ import torch
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.svm import LinearSVC
 from sklearn import linear_model
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, SGDClassifier
 from sklearn.cross_decomposition import CCA
+from sklearn import metrics
+from sklearn.model_selection import cross_val_score
 
 plt.style.use('seaborn-pastel');
 colors1 = plt.cm.tab20b(np.linspace(0, 1, 128))
 colors2 = plt.cm.tab20c(np.linspace(0, 1, 128))
 
-def forbenius_norm(mat, lag, ):
+def forbenius_norm(mat, lag):
     # forbenius norm cross some lag
     # return [np.trace(np.matmul(mat[i+lag].T, mat[i]))/\
     #                     np.trace(np.matmul(mat[i].T, mat[i]))/\
     #                     np.trace(np.matmul(mat[i+1].T, mat[i+1])) \
     #                             for i in range(len(mat)-lag-1)];
-    return [np.sum((mat[i+lag]-mat[i])**2) for i in range(len(mat)-lag-1)];
+    return [np.mean((mat[i+lag]-mat[i])**2) for i in range(len(mat)-lag-1)];
 
 def decomp(vs, dUs, dims, chunks, turns):
 
@@ -141,28 +143,53 @@ def vis_parafac(x, rank, plot_type):
     fig.tight_layout()
     plt.show();
 
-def vis_pca(x, tags=None):
+def vis_pca(x, tags=None, labels=None):
     assert(len(x.shape)==2);
     assert(len(tags.shape)==1);
     assert(x.shape[0]==tags.shape[0]);
-    cmap = mcolors.LinearSegmentedColormap.from_list('mymap', cc.glasbey_light[:22]);
     pca = PCA();
     low_x = pca.fit_transform(x);
     axe = plt.figure().add_subplot(111, projection='3d')
-    axe.scatter(low_x[:,0], low_x[:,1],low_x[:,2], cmap=cmap, c=tags);
+    bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
+    norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=plt.get_cmap('tab10').N)
+    scatters = []
+    for i in range(tags.max()+1):
+        scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1],low_x[tags==i][:,2], c=tags[tags==i], norm=norm, cmap='tab10'));
+    # legend = axe.legend(scatters, labels)
+    # axe.add_artist(legend)
     axe.plot(low_x[:,0], low_x[:,1], low_x[:,2],alpha=0.1, c='black');
+    axe.set_xlabel('PC1')
+    axe.set_ylabel('PC2')
+    axe.set_zlabel('PC3')
     plt.figure().tight_layout();
     plt.show();
+    return axe;
 
 def vis_lda(x, tags):
-    lda = LinearDiscriminantAnalysis();
+    lda = LinearDiscriminantAnalysis(n_components=min(tags.max(), 2));
     low_x = lda.fit_transform(x, tags);
     axe = plt.figure().add_subplot(111)
-    scatter = axe.scatter(low_x[:,0], low_x[:,1], c=tags, alpha=0.5);
-    axe.plot(low_x[:,0], low_x[:,1], alpha=0.1, c='black');
-    legend = axe.legend(*scatter.legend_elements(), title="Task Type");
-    axe.add_artist(legend)
-    plt.figure().tight_layout();
-    axe.set_xlabel('LD1')
-    axe.set_ylabel('LD2')
+    bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
+    norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=plt.get_cmap('tab10').N)
+    if tags.max()>=2:
+        scatter = axe.scatter(low_x[:,0], low_x[:,1], c=tags, alpha=0.5, norm=norm, cmap='tab10');
+        axe.plot(low_x[:,0], low_x[:,1], alpha=0.1, c='black');
+        # legend = axe.legend(*scatter.legend_elements(), title="Task Type");
+        # axe.add_artist(legend)
+        plt.figure().tight_layout();
+        axe.set_xlabel('LD1')
+        axe.set_ylabel('LD2')
+    elif tags.max()==1:
+        axe.hist(low_x[tags==0].flatten(), density=True, alpha=0.5, label='0')
+        axe.hist(low_x[tags==1].flatten(), density=True, alpha=0.5, label='1')
+        plt.legend()
+        plt.figure().tight_layout();
+        axe.set_ylim(0, 1)
+        axe.set_xlabel('LD')
+        axe.set_ylabel('Density')
     return axe;
+
+def svc_cv(x, y):
+    clf = LinearSVC();
+    scores = cross_val_score(clf, x, y, cv=5, scoring='f1_macro')
+    return scores;

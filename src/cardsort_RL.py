@@ -10,7 +10,7 @@ from lamb import Lamb
 from ppo import PPO, Memory
 import tqdm
 from decomposition import *
-
+%matplotlib qt
 '''
     simpler WCST
     the episodes are predetermined, but whether the dimension to attend to changes from trial to trial
@@ -85,7 +85,6 @@ scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
 n_epochs = 0;
 len_seq = 80;
-val_len = 80;
 buffer_size = 50;
 num_samples = 20;
 
@@ -175,7 +174,9 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
         cumReward.append(torch.mean(torch.as_tensor(episode_buffer.rewards)));
         episode_buffer.clear_memory();
         # scheduler1.step();
-        torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'cumReward': cumReward}, 'model_WCST');
+        torch.save({'model_state_dict': model.state_dict(), \
+                    'optimizer_state_dict': optimizer.state_dict(), \
+                    'cumReward': cumReward}, 'model_WCST');
 
 
 
@@ -189,13 +190,17 @@ dUs = [];
 hs = [];
 dims = [];
 cumReward = [];
+actions = [];
 with torch.no_grad():
-
+    # freeze_fw_start = np.random.randint(0, len_seq)
+    # freeze_fw_start = 100
+    # print(freeze_fw_start)
     for j in range(num_samples):
 
         dUs.append([]);
         hs.append([]);
         dims.append([]);
+        actions.append([]);
         cumReward.append([]);
 
         # data = torch.as_tensor(torch.rand(val, bits)>0.5, dtype=torch.float, device=device);
@@ -244,30 +249,66 @@ with torch.no_grad():
             action_idx = m.sample();
             action = torch.zeros(1, val, dtype=torch.float, device=device);
             action[:, action_idx] = 1.0;
+            actions[-1].extend([action_idx]*(chunks+2));
 
             # get reward
             reward = torch.as_tensor((instrInts[newDim].flatten()==action_idx), dtype=torch.float, device=device).reshape(1,-1).detach();
             cumReward[-1].append(1-reward.item());
 
 print(np.mean(cumReward));
-plt.imshow(cumReward);
-plt.xlabel('Intra-Episode Timestep')
-plt.ylabel('Episodes')
-plt.title('Errors in Episodes of WCST')
-plt.show()
+# mean_rwd = np.mean(cumReward, axis=0);
+# std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
+# plt.plot(np.arange(len_seq), mean_rwd);
+# plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
+# # plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
+# plt.imshow(cumReward)
+# plt.xlabel('Intra-Episode Timestep')
+# plt.ylabel('Episodes')
+# plt.ylabel('Error Rate')
+# plt.title('Errors in Episodes of WCST')
+# plt.show()
+
 
 hs = torch.stack([torch.cat(h, dim=0) for h in hs], dim=0).transpose(0, 1) # from batch first to timestep first
 # vs = vs.reshape((len_seq//20, (chunks+2)*20, *vs.shape[1:]))
 dUs = torch.stack([torch.cat(dU, dim=0) for dU in dUs], dim=0).transpose(0, 1)
 # dUs = dUs.reshape((len_seq//20, (chunks+2)*20, *dUs.shape[1:]))
-dims = torch.tensor(dims).long()
+dims = torch.tensor(dims).long().transpose(0, 1)
+actions = torch.tensor(actions).long().transpose(0, 1)
 # vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
 # vis_parafac(dUs.detach().numpy(), rank=3, plot_type='wcst_mat')
+# plt.plot(forbenius_norm(dUs.numpy(), 1))
 
-axe = vis_lda(hs.flatten(0,1), dims.flatten());
-axe.set_title("LDA of Cell State")
-plt.show()
-axe = vis_lda(dUs.flatten(2,3).flatten(0,1), dims.flatten());
-axe.set_title("LDA of Fast Weight")
-plt.show()
-# vis_lda((model.rnns[0].h2h.weight[2*64:3*64,:]+torch.nn.functional.softplus(model.rnns[0].alpha)*dUs).detach().flatten(2,3).flatten(0,1), dims.flatten());
+# axe = vis_lda(hs.flatten(0,1), actions.flatten());
+# axe.set_title("LDA of Cell State")
+# axe = vis_lda(dUs.flatten(2,3).flatten(0,1), actions.flatten());
+# axe.set_title("LDA of Fast Weight")
+
+# axe = vis_pca(hs.flatten(0,1), actions.flatten(), labels=[i for i in range(val)]);
+# axe.set_title("PCA of Cell State")
+# axe = vis_pca(dUs.flatten(2,3).flatten(0,1), actions.flatten(), labels=[i for i in range(val)]);
+# axe.set_title("PCA of Fast Weight")
+
+mean_scores = [];
+std_scores = [];
+
+for t in range(100):
+    print(t)
+    scores_hs_ans = svc_cv(hs[t::100].flatten(0,1), actions[t::100].flatten())
+    scores_dUs_ans = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), actions[t::100].flatten())
+    scores_hs_task = svc_cv(hs[t::100].flatten(0,1), dims[t::100].flatten())
+    scores_dUs_task = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), dims[t::100].flatten())
+    mean_scores.append([scores_hs_ans.mean(), scores_dUs_ans.mean(), scores_hs_task.mean(), scores_dUs_task.mean()])
+    std_scores.append([1.96*scores_hs_ans.std(), 1.96*scores_dUs_ans.std(), 1.96*scores_hs_task.std(), 1.96*scores_dUs_task.std()])
+
+mean_scores = np.array(mean_scores)
+std_scores = np.array(std_scores)
+
+labels = ['Cell State X Action', 'Fast Weight X Action', 'Cell State X Task', 'Fast Weight X Task']
+fig, ax = plt.subplots()
+for i in range(4):
+    eb = plt.errorbar(x=range(100), \
+        y=mean_scores[:,i], \
+        yerr=std_scores[:,i], label=i);
+fig.legend()
+fig.show()
