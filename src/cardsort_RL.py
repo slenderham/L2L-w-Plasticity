@@ -83,7 +83,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # optimizer = optim.SGD(param_groups, lr=1);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
-n_epochs = 100000;
+n_epochs = 0;
 len_seq = 80;
 buffer_size = 50;
 num_samples = 20;

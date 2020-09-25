@@ -39,11 +39,11 @@ class PPO:
     
     def update(self, memory, task='cardsort', **kwargs):   
         if task=='one_shot':
-            rewards = torch.stack(memory.rewards);
-            values = torch.stack(memory.values);
+            rewards = torch.stack(memory.rewards).detach();
+            values = torch.stack(memory.values).detach().squeeze(-1);
             old_states = memory.states[0];
-            old_actions = torch.stack(memory.actions);
-            old_logprobs = torch.stack(memory.logprobs);
+            old_actions = torch.stack(memory.actions).detach();
+            old_logprobs = torch.stack(memory.logprobs).detach();
         else:
             # both should be of shape trials X batch size
             rewards = torch.as_tensor(memory.rewards).to(device).detach().t();
@@ -63,7 +63,7 @@ class PPO:
             v_next = values[-idx];
             returns[-idx] = A + values[-idx];
 
-        # Normalizing the rewards:
+        # Normalizing the advantages:
         advantages = returns-values;
         advatanges = (advantages - advantages.mean()) / (advantages.std() + 1e-5);
         
@@ -81,7 +81,7 @@ class PPO:
                                                       dU = new_dU, \
                                                       trace = new_trace);
                 if task=='ont_shot':
-                    log_probs = log_probs[-kwargs['num_repeats']:-(kwargs['num_pics']+1)*kwargs['num_repeats']:-kwargs['num_repeats']]; # should be num_pics X batch_size X 1
+                    log_probs = log_probs[-kwargs['num_repeats']:-(kwargs['num_pics']+1)*kwargs['num_repeats']:kwargs['num_repeats']]; # should be num_pics X batch_size X 1
                     log_probs = log_probs.squeeze(-1).t();
                     log_probs = torch.nn.functional.log_softmax(log_probs);
                 else:

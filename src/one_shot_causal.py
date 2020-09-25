@@ -12,7 +12,7 @@ from tqdm import tqdm
 from PIL import Image
 from lamb import Lamb
 import pickle
-from decomposition import calculateAttention, vis_parafac
+# from decomposition import calculateAttention, vis_parafac
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
@@ -78,7 +78,7 @@ def offset(batch):
         train_inputs[i] = train_inputs[[i for i in range(num_pics)], bonus_round_idx[i]];
     bonus_round_novel_outcome_idx = torch.argmax(bonus_round_idx, dim=-1);
 
-    train_inputs = torch.repeat_interleave(repeats=num_repeats, dim=1);
+    train_inputs = torch.repeat_interleave(train_inputs, repeats=num_repeats, dim=1);
     train_inputs_shuff = torch.cat([train_inputs_shuff, train_inputs, torch.zeros(batch_size, num_repeats, 1, img_size, img_size)], dim=1); 
     train_inputs_shuff = train_inputs_shuff.transpose(0, 1);
     # batch_size, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats+num_repeats, 1, img_size, img_size
@@ -88,14 +88,14 @@ def offset(batch):
     novel_outcome_loc = perm_order[-1]//num_pics_per_trial;
     for i in range(batch_size):
         for j in range(num_trials):
-            if (task_types[i]==0 and j==novel_outcome_loc[i]) or (task_types[i]==1 and j!=novel_outcome_loc[i]):
+            if (task_types[i]==0 and j==novel_outcome_loc) or (task_types[i]==1 and j!=novel_outcome_loc):
                 outcomes[i,j,0] = novel_outcome[i]; # if novel stim-novel outcome and the trial contains the novel stim, 
             else:
                 outcomes[i,j,0] = -novel_outcome[i];
     outcomes_total = torch.zeros(batch_size, num_trials, num_pics_per_trial, 1)
     outcomes_total = torch.cat([outcomes_total, outcomes.reshape(batch_size, num_trials, 1, 1)], dim=2);
     outcomes_total = outcomes_total.reshape(batch_size, num_trials*(num_pics_per_trial+1), 1);
-    outcomes_total = torch.cat([outcomes_total, torch.zeros(batch_size, (num_pics+1)*num_repeats, 1)]);
+    outcomes_total = torch.cat([outcomes_total, torch.zeros(batch_size, (num_pics+1)*num_repeats, 1)], dim=1);
     outcomes_total = outcomes_total.transpose(0, 1);
 
     # indicator for phase of task (image, outcome after each trial, bonus round, value estimation)
@@ -164,10 +164,10 @@ train_iter = BatchMetaDataLoader(train_data, batch_size=batch_size);
 val_iter = BatchMetaDataLoader(val_data, batch_size=batch_size);
 test_iter = BatchMetaDataLoader(test_data, batch_size=batch_size);
 
-model = SGRU(in_type = "image+categorical",\
+model = SGRU(in_type = "image+continuous",\
             out_type = "continuous",\
             num_token = 0,\
-            input_dim = 64,\
+            input_dim = 5,\
             hidden_dim = 64,\
             out_dim = 1,\
             num_layers = 1,\
@@ -214,13 +214,8 @@ val_iter = enumerate(val_iter);
 test_iter = enumerate(test_iter);
 
 for idx, batch in tqdm(train_iter, position=0):
-    episode_buffer.actions.append([]);
-    episode_buffer.states.append([]);
-    episode_buffer.logprobs.append([]);
-    episode_buffer.rewards.append([]);
-    episode_buffer.values.append([]);
     with torch.no_grad():
-        input_total, is_blank_image, bonus_round_novel_outcome_idx = offset(batch);
+        input_total, bonus_round_novel_outcome_idx = offset(batch);
         new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
         new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                 x = input_total,\
@@ -230,7 +225,8 @@ for idx, batch in tqdm(train_iter, position=0):
                                                                                 trace = new_trace);
 
         # sample an action
-        log_probs = output[-num_repeats:-(num_pics+1)*num_repeats:-num_repeats]; # should be num_pics X batch_size X 1
+        print(-num_repeats, -(num_pics+1)*num_repeats, -num_repeats)
+        log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
         log_probs = log_probs.squeeze(-1).t();
         log_probs = torch.nn.functional.log_softmax(log_probs);
 
@@ -240,14 +236,14 @@ for idx, batch in tqdm(train_iter, position=0):
         # get reward
         reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).float();
 
-        episode_buffer.actions[-1].append(action_idx);
-        episode_buffer.states[-1].append(input_total); # batch_size, trial number, within trial time step, 1, input_dim
-        episode_buffer.logprobs[-1].append(m.log_prob(action_idx));
-        episode_buffer.rewards[-1].append(reward);
-        episode_buffer.values[-1].append(value[-1]);
+        episode_buffer.actions.append(action_idx);
+        episode_buffer.states.append(input_total); # batch_size, trial number, within trial time step, 1, input_dim
+        episode_buffer.logprobs.append(m.log_prob(action_idx));
+        episode_buffer.rewards.append(reward);
+        episode_buffer.values.append(value[-1]);
 
     # update the policy every [buffer_size] steps
-    ppo.update(episode_buffer, num_pics=num_pics, num_repeats=num_repeats);
+    ppo.update(episode_buffer, task='one_shot', num_pics=num_pics, num_repeats=num_repeats);
     episode_buffer.clear_memory();
     # scheduler1.step();
 
@@ -255,7 +251,7 @@ for idx, batch in tqdm(train_iter, position=0):
         with torch.no_grad():
             valReward = 0;
             for jdx, batch in tqdm(val_iter, position=0):
-                input_total, is_blank_image, bonus_round_novel_outcome_idx = offset(batch);
+                input_total, bonus_round_novel_outcome_idx = offset(batch);
                 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
                 new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                         x = input_total,\
@@ -265,7 +261,7 @@ for idx, batch in tqdm(train_iter, position=0):
                                                                                         trace = new_trace);
 
                 # sample an action
-                log_probs = output[-num_repeats:-(num_pics+1)*num_repeats:-num_repeats]; # should be num_pics X batch_size X 1
+                log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
                 log_probs = log_probs.squeeze(-1).t();
                 log_probs = torch.nn.functional.log_softmax(log_probs);
 

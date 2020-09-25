@@ -185,7 +185,7 @@ class SGRU(torch.nn.Module):
                 x = self.bn4(torch.relu(self.pool4(self.conv4(x))));
                 x = torch.flatten(x, 1);
                 return x;
-            self.img_encoder = encode;
+            self.encoder = encode;
             input_dim += 64;
 
         self.rnns = [];
@@ -216,8 +216,8 @@ class SGRU(torch.nn.Module):
         if self.in_type=="categorical":
             prev_out = self.encoder(x);
         elif self.in_type=="image+continuous":
-            num_steps, batch_size = x.shape[:2]
-            img = self.encoder(x[0].reshape(num_steps*batch_size, -1, -1, -1)).reshape(num_steps, batch_size, -1);
+            num_steps, batch_size = x[0].shape[:2]
+            img = self.encoder(x[0].flatten(0, 1)).reshape(num_steps, batch_size, -1);
             prev_out = torch.cat([img, x[1]], dim=-1);
         else:
             prev_out = x;
