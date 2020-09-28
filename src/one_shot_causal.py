@@ -109,7 +109,8 @@ def offset(batch):
 
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
 
-    return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], bonus_round_novel_outcome_idx.to(device)
+    return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], \
+                    bonus_round_novel_outcome_idx.to(device), task_types;
 
 batch_size = 32;
 num_pics = 3;
@@ -218,7 +219,7 @@ test_iter = enumerate(test_iter);
 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
 for idx, batch in tqdm(train_iter, position=0):
     with torch.no_grad():
-        input_total, bonus_round_novel_outcome_idx = offset(batch);
+        input_total, bonus_round_novel_outcome_idx, task_types = offset(batch);
         new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                 x = input_total,\
                                                                                 h = new_h, \
@@ -235,7 +236,11 @@ for idx, batch in tqdm(train_iter, position=0):
         action_idx = m.sample();
 
         # get reward
-        reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).to(device).float();
+        got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
+        # if novel-reward, get reward if chose novel and get novel image
+        # if novel-nonreward, get reward didn't get novel image, or 
+        reward = task_types*got_novel_trial.float()*(action_idx!=bonus_round_novel_outcome_idx).float()*\
+                +(1-task_types)*((not got_novel_trial) | (action_idx==bonus_round_novel_outcome_idx)).float();
 
         episode_buffer.actions.append(action_idx); # time_step, batch size, 1
         episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
@@ -254,7 +259,7 @@ for idx, batch in tqdm(train_iter, position=0):
         with torch.no_grad():
             valReward = 0;
             for jdx, batch in tqdm(val_iter, position=0):
-                input_total, bonus_round_novel_outcome_idx = offset(batch);
+                input_total, bonus_round_novel_outcome_idx, task_types = offset(batch);
                 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
                 new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                         x = input_total,\
@@ -271,9 +276,11 @@ for idx, batch in tqdm(train_iter, position=0):
                 action_idx = m.sample();
 
                 # get reward
-                reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).to(device).float();
-                valReward += reward/val_batches/batch_size;
+                reward = task_types*got_novel_trial.float()*(action_idx!=bonus_round_novel_outcome_idx).float()*\
+                    +(1-task_types)*((not got_novel_trial) | (action_idx==bonus_round_novel_outcome_idx)).float();
+                valReward += reward.mean()/val_batches;
                 if ((jdx+1)%50==0):
+                    print(valReward)
                     cumReward.append(valReward);
                     torch.save({'model_state_dict': model.state_dict(), \
                                 'optimizer_state_dict': optimizer.state_dict(), \
