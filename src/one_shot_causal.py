@@ -65,7 +65,7 @@ def offset(batch):
         cum_freq += f;
     assert(cum_freq==sum(freqs));
     # shuffle input
-    train_inputs_shuff = train_inputs.to(device)[:,orders.long()];
+    train_inputs_shuff = train_inputs[:,orders.long()];
     assert(train_inputs_shuff.shape==(batch_size, num_pics_per_trial*num_trials, 1, img_size, img_size))
     # separate the sequence into trials, and add blank screen after each trial
     train_inputs_shuff = train_inputs_shuff.reshape(batch_size, num_trials, num_pics_per_trial, 1, img_size, img_size);
@@ -109,10 +109,11 @@ def offset(batch):
 
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
 
-    return [train_inputs_shuff, 8*torch.cat([phase_ind, outcomes_total], dim=-1)], bonus_round_novel_outcome_idx
+    return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], bonus_round_novel_outcome_idx.to(device)
 
-batch_size = 50;
+batch_size = 32;
 num_pics = 3;
+len_seq = 10;
 num_trials = 5;
 num_pics_per_trial = 5;
 num_repeats = 4;
@@ -120,6 +121,7 @@ freqs = [16, 8, 1];
 assert(sum(freqs)==num_trials*num_pics_per_trial)
 assert(len(freqs)==num_pics)
 assert(all([freqs[i]>=freqs[i+1] for i in range(num_pics-1)]));
+assert(100%len_seq==0)
 img_size = 28;
 train_batches = 1e6;
 val_batches = 50;
@@ -202,7 +204,7 @@ cumReward = []
 episode_buffer = Memory()
 ppo = PPO(policy = model, \
           optimizer = optimizer, \
-          seq_len = 1,\
+          seq_len = len_seq,\
           buffer_size = batch_size,\
           beta_v =0.4,\
           gamma = 0.95,\
@@ -213,10 +215,10 @@ train_iter = enumerate(train_iter, start=last_batch);
 val_iter = enumerate(val_iter);
 test_iter = enumerate(test_iter);
 
+new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
 for idx, batch in tqdm(train_iter, position=0):
     with torch.no_grad():
         input_total, bonus_round_novel_outcome_idx = offset(batch);
-        new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
         new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                 x = input_total,\
                                                                                 h = new_h, \
@@ -225,26 +227,27 @@ for idx, batch in tqdm(train_iter, position=0):
                                                                                 trace = new_trace);
 
         # sample an action
-        print(-num_repeats, -(num_pics+1)*num_repeats, -num_repeats)
         log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
         log_probs = log_probs.squeeze(-1).t();
-        log_probs = torch.nn.functional.log_softmax(log_probs);
+        log_probs = torch.nn.functional.log_softmax(log_probs, -1);
 
         m = torch.distributions.Categorical(logits = log_probs[-1]);
         action_idx = m.sample();
 
         # get reward
-        reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).float();
+        reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).to(device).float();
 
-        episode_buffer.actions.append(action_idx);
-        episode_buffer.states.append(input_total); # batch_size, trial number, within trial time step, 1, input_dim
+        episode_buffer.actions.append(action_idx); # time_step, batch size, 1
+        episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
         episode_buffer.logprobs.append(m.log_prob(action_idx));
         episode_buffer.rewards.append(reward);
         episode_buffer.values.append(value[-1]);
 
     # update the policy every [buffer_size] steps
-    ppo.update(episode_buffer, task='one_shot', num_pics=num_pics, num_repeats=num_repeats);
-    episode_buffer.clear_memory();
+    if (idx+1)%len_seq==0:
+        ppo.update(episode_buffer, task='one_shot', num_pics=num_pics, num_repeats=num_repeats);
+        episode_buffer.clear_memory();
+        new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
     # scheduler1.step();
 
     if (idx+1)%100==0:
@@ -263,16 +266,16 @@ for idx, batch in tqdm(train_iter, position=0):
                 # sample an action
                 log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
                 log_probs = log_probs.squeeze(-1).t();
-                log_probs = torch.nn.functional.log_softmax(log_probs);
+                log_probs = torch.nn.functional.log_softmax(log_probs, -1);
 
                 m = torch.distributions.Categorical(logits = log_probs[-1]);
                 action_idx = m.sample();
 
                 # get reward
-                reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).float();
+                reward = (action_idx==bonus_round_novel_outcome_idx).float()*(torch.rand(batch_size)>0.4).to(device).float();
                 valReward += reward/val_batches/batch_size;
                 if ((jdx+1)%50==0):
-                    cumReward.append();
+                    cumReward.append(valReward);
                     torch.save({'model_state_dict': model.state_dict(), \
                                 'optimizer_state_dict': optimizer.state_dict(), \
                                 'cumReward': cumReward}, 'model_one_shot');
