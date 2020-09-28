@@ -231,7 +231,7 @@ for idx, batch in tqdm(train_iter, position=0):
         log_probs = log_probs.squeeze(-1).t();
         log_probs = torch.nn.functional.log_softmax(log_probs, -1);
 
-        m = torch.distributions.Categorical(logits = log_probs[-1]);
+        m = torch.distributions.Categorical(logits = log_probs);
         action_idx = m.sample();
 
         # get reward
@@ -267,8 +267,7 @@ for idx, batch in tqdm(train_iter, position=0):
                 log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
                 log_probs = log_probs.squeeze(-1).t();
                 log_probs = torch.nn.functional.log_softmax(log_probs, -1);
-
-                m = torch.distributions.Categorical(logits = log_probs[-1]);
+                m = torch.distributions.Categorical(logits = log_probs);
                 action_idx = m.sample();
 
                 # get reward

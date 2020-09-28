@@ -41,7 +41,7 @@ class PPO:
         if task=='one_shot':
             rewards = torch.stack(memory.rewards).detach();
             values = torch.stack(memory.values).detach().squeeze(-1);
-            old_states = memory.states[0];
+            old_states = memory.states;
             old_actions = torch.stack(memory.actions).detach();
             old_logprobs = torch.stack(memory.logprobs).detach();
         else:
@@ -75,15 +75,16 @@ class PPO:
             # for each timestep, give a batch of old observations
             for s, a, r, adv, old_log_prob in zip(old_states, old_actions, returns, advantages, old_logprobs):
                 new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = self.policy.train().forward(\
-                                                      x = s.to(device),\
+                                                      x = s,\
                                                       h = new_h, \
                                                       v = new_v, \
                                                       dU = new_dU, \
                                                       trace = new_trace);
-                if task=='ont_shot':
-                    log_probs = log_probs[-kwargs['num_repeats']:-(kwargs['num_pics']+1)*kwargs['num_repeats']:kwargs['num_repeats']]; # should be num_pics X batch_size X 1
+                
+                if task=='one_shot':
+                    log_probs = log_probs[-(kwargs['num_pics']+1)*kwargs['num_repeats']:-kwargs['num_repeats']:kwargs['num_repeats']]; # should be num_pics X batch_size X 1
                     log_probs = log_probs.squeeze(-1).t();
-                    log_probs = torch.nn.functional.log_softmax(log_probs);
+                    log_probs = torch.nn.functional.log_softmax(log_probs, -1);
                 else:
                     log_probs = log_probs[-1];
 
