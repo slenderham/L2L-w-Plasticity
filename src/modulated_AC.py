@@ -24,12 +24,12 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, 2*hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 3*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, 2*hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 3*hidden_dim, bias=bias);
 
-        self.lnx = torch.nn.LayerNorm(2*hidden_dim);
-        self.lnh = torch.nn.LayerNorm(2*hidden_dim);
+        self.lnx = torch.nn.LayerNorm(3*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(3*hidden_dim);
 
         self.h2mod = torch.nn.Linear(hidden_dim, 3*mod_rank, bias=bias);
 
@@ -44,13 +44,13 @@ class SGRUCell(torch.nn.Module):
         else:
             self.act = Swish();
         # strength of weight modification
-        self.alpha = torch.nn.Parameter(-3.5*torch.ones(1));
+        self.alpha = torch.nn.Parameter(-4.5*torch.ones(1));
         self.mod2hr = torch.nn.Linear(mod_rank, 1);
         self.mod2hs = torch.nn.Linear(mod_rank, 1);
         self.mod2hm = torch.nn.Linear(mod_rank, 1);
 
         # time constant of STDP weight modification
-        self.tau_U = torch.nn.Parameter(-5.5*torch.ones(1));
+        self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
         self.reset_parameter();
 
     def forward(self, x, h, v, dU, trace, **kwargs):
@@ -78,14 +78,15 @@ class SGRUCell(torch.nn.Module):
         # preactivations
         Wx = self.lnx(self.x2h(x));
         Wh = self.h2h(h);
-        Wh[:, self.hidden_dim:2*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
+        Wh[:, -self.hidden_dim:] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
         Wh = self.lnh(Wh);
 
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        z, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim], dim=-1);
+        z, o, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
 
+        o = torch.sigmoid(o);
         z = torch.sigmoid(z);
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
@@ -97,11 +98,12 @@ class SGRUCell(torch.nn.Module):
         m = torch.nn.functional.tanhshrink(self.mod2hm(m)).unsqueeze(-1);
 
         if not freeze_fw:
-            new_trace_e = (1-r)*trace_e + r*h;
-            new_trace_E = (1-s)*trace_E + s*(torch.bmm(new_h.unsqueeze(2), new_trace_e.unsqueeze(1)) - torch.bmm(new_trace_e.unsqueeze(2), new_h.unsqueeze(1)));
+            h_for_fw = o*new_h;
+            new_trace_e = (1-r)*trace_e + r*h_for_fw;
+            new_trace_E = (1-s)*trace_E + s*(torch.bmm(h_for_fw.unsqueeze(2), trace_e.unsqueeze(1)) - torch.bmm(trace_e.unsqueeze(2), h_for_fw.unsqueeze(1)));
             dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
-            upper = torch.relu(self.clip_val-self.h2h.weight[self.hidden_dim:2*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
-            lower = -torch.relu(self.clip_val+self.h2h.weight[self.hidden_dim:2*self.hidden_dim,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            upper = torch.relu(self.clip_val-self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            lower = -torch.relu(self.clip_val+self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
             dU = torch.where(dU>upper, upper, dU);
             dU = torch.where(dU<lower, lower, dU);
         else:
@@ -113,11 +115,11 @@ class SGRUCell(torch.nn.Module):
     def reset_parameter(self):
         for name, param in self.named_parameters():
             if "h2h.weight" in name:
-                for i in range(2):
-                    torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
+                for i in range(3):
+                    torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:], gain=math.sqrt(2));
             elif "x2h.weight" in name:
-                for i in range(2):
-                    torch.nn.init.xavier_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
+                for i in range(3):
+                    torch.nn.init.kaiming_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.bias" in name:
                 torch.nn.init.zeros_(param);
             elif "h2h.bias" in name :

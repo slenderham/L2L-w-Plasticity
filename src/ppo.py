@@ -23,7 +23,7 @@ class Memory:
         del self.values[:]
 
 class PPO:
-    def __init__(self, policy, optimizer, seq_len, buffer_size, beta_v = 0.5, beta_entropy = 0.001, gamma=0.99, lambd=0.95, K_epochs=4, eps_clip=0.2):
+    def __init__(self, policy, optimizer, seq_len, buffer_size, beta_v = 0.5, beta_entropy = 0.001, gamma=0.9, lambd=0.9, K_epochs=4, eps_clip=0.2):
         self.gamma = gamma;
         self.lambd = lambd;
         self.eps_clip = eps_clip;

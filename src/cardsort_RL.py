@@ -68,7 +68,7 @@ model = SGRU(in_type = "continuous",\
              out_dim = val,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 16\
+             mod_rank = 32\
             );
 
 if torch.cuda.is_available():
@@ -79,9 +79,9 @@ else:
 
 param_groups = add_weight_decay(model);
 
-optimizer = optim.AdamW(param_groups, lr=1e-3);
+optimizer = optim.AdamW(param_groups, lr=1e-3, eps=1e-5);
 # optimizer = optim.SGD(param_groups, lr=1);
-scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
+# scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
 n_epochs = 0;
 len_seq = 80;
