@@ -265,8 +265,8 @@ for idx, batch in tqdm(train_iter, position=0):
         got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
         # if novel-reward, get reward if chose novel and get novel image
         # if novel-nonreward, get reward didn't get novel image, or 
-        reward = (1-task_types)*got_novel_trial.float()*(action_idx==bonus_round_novel_outcome_idx).float()\
-                +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
+        reward = (1-task_types)*(got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)).float()\
+            +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
 
         episode_buffer.actions.append(action_idx); # time_step, batch size, 1
         episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
@@ -302,7 +302,8 @@ for idx, batch in tqdm(train_iter, position=0):
                 action_idx = m.sample();
 
                 # get reward
-                reward = (1-task_types)*got_novel_trial.float()*(action_idx==bonus_round_novel_outcome_idx).float()\
+                got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
+                reward = (1-task_types)*(got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)).float()\
                     +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
                 valReward += reward.mean()/val_batches;
                 if ((jdx+1)%50==0):
