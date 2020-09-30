@@ -89,61 +89,70 @@ def offset(batch):
         bonus_round_train_inputs[i] = train_inputs[[i]*num_pics, bonus_round_idx[i]];
     bonus_round_novel_outcome_idx = torch.argmax(bonus_round_idx, dim=-1);
 
-    bonus_round_train_inputs = torch.repeat_interleave(bonus_round_train_inputs, repeats=num_repeats, dim=1);
     train_inputs_shuff = torch.cat([train_inputs_shuff, bonus_round_train_inputs, torch.zeros(batch_size, num_repeats, 1, img_size, img_size)], dim=1); 
     train_inputs_shuff = train_inputs_shuff.transpose(0, 1);
-    # batch_size, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats+num_repeats, 1, img_size, img_size
+
+    fig, axes = plt.subplots(num_trials, num_pics_per_trial+1)
+    for i in range(num_trials):
+        for j in range(num_pics_per_trial+1):
+            axes[i][j].imshow(train_inputs_shuff[i*(num_pics_per_trial+1)+j,0,0])
+    plt.show()
+    fig, axes = plt.subplots(num_pics)
+    for i in range(num_pics):
+        axes[i].imshow(train_inputs_shuff[num_trials*(num_pics_per_trial+1)+i,0,0])
+    plt.show()
+
+    train_inputs_shuff = torch.repeat_interleave(train_inputs_shuff, repeats=num_repeats, dim=0)
+    # num_repeats* (num_trials*(num_pics_per_trial+1)+num_pics+1), batch_size, 1, img_size, img_size
 
     # calculate outcomes based on task type
     outcomes = torch.zeros(batch_size, num_trials, 1);
-    novel_outcome_loc = perm_order[:,-1]//num_pics_per_trial;
+    novel_stim_loc = perm_order[:,-1]//num_pics_per_trial;
     for i in range(batch_size):
-        for j in range(num_trials):
-            if (task_types[i]==0 and j==novel_outcome_loc[i]) or (task_types[i]==1 and j!=novel_outcome_loc[i]):
-                outcomes[i,j,0] = novel_outcome[i]; # if novel stim-novel outcome and the trial contains the novel stim, 
-            else:
-                outcomes[i,j,0] = -novel_outcome[i];
+        # if novel image to novel outcome, find novel outcome
+        if task_types[i]==0:
+            outcomes[i] = -novel_outcome[i]; # set all others to be negative of novel outcome
+            outcomes[i, novel_stim_loc[i], 0] = novel_outcome[i]; # if novel stim-novel outcome and the trial contains the novel stim, 
+        # if novel image to nonnovel outcome, sample a trial to put novel outcome
+        else:
+            outcomes[i] = -novel_outcome[i]; # set all others to be negative of novel outcome
+            novel_outcome_loc = [t for t in range(num_trials) if t!=novel_stim_loc[i]][torch.randperm(num_trials-1)[0]]
+            outcomes[i, novel_outcome_loc, 0] = novel_outcome[i];
     
-    outcomes_total = torch.zeros(batch_size, num_trials, num_pics_per_trial, 1)
+    outcomes_total = torch.zeros(batch_size, num_trials, num_pics_per_trial, 1) 
     outcomes_total = torch.cat([outcomes_total, outcomes.reshape(batch_size, num_trials, 1, 1)], dim=2);
-    outcomes_total = outcomes_total.reshape(batch_size, num_trials*(num_pics_per_trial+1), 1);
-    outcomes_total = torch.cat([outcomes_total, torch.zeros(batch_size, (num_pics+1)*num_repeats, 1)], dim=1);
+    outcomes_total = outcomes_total.flatten(1, 2); # num_trials * (num_pics_per_trial + 1)
+    outcomes_total = torch.cat([outcomes_total, torch.zeros(batch_size, (num_pics+1), 1)], dim=1); # num_trials * (num_pics_per_trial + 1) + num_pics + 1
     outcomes_total = outcomes_total.transpose(0, 1);
 
+    outcomes_total = torch.repeat_interleave(outcomes_total, repeats=num_repeats, dim=0)
+
     # indicator for phase of task (image, outcome after each trial, bonus round, value estimation)
-    phase_ind = torch.zeros(batch_size, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats+num_repeats, 4);
+    phase_ind = torch.zeros(batch_size, num_trials*(num_pics_per_trial+1)+num_pics+1, 4);
     for j in range(num_trials):
         phase_ind[:, j*(num_pics_per_trial+1):j*(num_pics_per_trial+1)+num_pics_per_trial, 0] = 1.0;
         phase_ind[:, j*(num_pics_per_trial+1)+num_pics_per_trial, 1] = 1.0
-    phase_ind[:, num_trials*(num_pics_per_trial+1):num_trials*(num_pics_per_trial+1)+num_pics*num_repeats, 2] = 1.0
-    phase_ind[:, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats:, 3] = 1.0
+    phase_ind[:, num_trials*(num_pics_per_trial+1):num_trials*(num_pics_per_trial+1)+num_pics, 2] = 1.0
+    phase_ind[:, num_trials*(num_pics_per_trial+1)+num_pics:, 3] = 1.0
     phase_ind = phase_ind.transpose(0, 1)
+    phase_ind = torch.repeat_interleave(phase_ind, repeats=num_repeats, dim=0)
 
-    # fig, axes = plt.subplots(num_trials, num_pics_per_trial+1)
-    # for i in range(num_trials):
-    #     for j in range(num_pics_per_trial+1):
-    #         axes[i][j].imshow(train_inputs_shuff[i*(num_pics_per_trial+1)+j,0,0])
-    # plt.show()
+    print(outcomes_total[:,0])
+    print(task_types[0])
 
-    # fig, axes = plt.subplots(num_pics, num_repeats)
-    # for i in range(num_pics):
-    #     for j in range(num_repeats):
-    #         axes[i][j].imshow(train_inputs_shuff[num_trials*(num_pics_per_trial+1)+i*num_repeats+j,0,0])
-    # plt.show()
-
-    # print(bonus_round_novel_outcome_idx[0])
+    print(bonus_round_novel_outcome_idx[0])
 
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
 
     return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], \
-                    bonus_round_novel_outcome_idx.to(device), task_types.to(device);
+                    bonus_round_novel_outcome_idx.to(device), task_types.to(device), novel_outcome.to(device);
 
 batch_size = 64;
 num_pics = 3;
 len_seq = 1;
 num_trials = 5;
 num_pics_per_trial = 5;
-num_repeats = 4;
+num_repeats = 3;
 freqs = [16, 8, 1];
 assert(sum(freqs)==num_trials*num_pics_per_trial)
 assert(len(freqs)==num_pics)
@@ -245,7 +254,7 @@ test_iter = enumerate(test_iter);
 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
 for idx, batch in tqdm(train_iter, position=0):
     with torch.no_grad():
-        input_total, bonus_round_novel_outcome_idx, task_types = offset(batch);
+        input_total, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
         new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                 x = input_total,\
                                                                                 h = new_h, \
@@ -263,10 +272,13 @@ for idx, batch in tqdm(train_iter, position=0):
 
         # get reward
         got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
-        # if novel-reward, get reward if chose novel and get novel image
-        # if novel-nonreward, get reward didn't get novel image, or 
-        reward = (1-task_types)*(got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)).float()\
-            +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
+        chose_novel = got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)
+        # novel stim to novel outcome -> choose novel then novel outcome, didn't choose novel then nonnovel outcome
+        # novel stim to nonnovel outcome -> choose novel then nonnovel outcome, didn't choose novel then novel outcome
+        reward = (1-task_types)*(chose_novel).float()*novel_outcome\ 
+                +(1-task_types)*(~chose_novel).float()*(-novel_outcome)\
+                +(task_types)*(chose_novel).float()*(-novel_outcome)\
+                +(task_types)*(~chose_novel).float()*(novel_outcome);
 
         episode_buffer.actions.append(action_idx); # time_step, batch size, 1
         episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
@@ -285,7 +297,7 @@ for idx, batch in tqdm(train_iter, position=0):
         with torch.no_grad():
             valReward = 0;
             for jdx, batch in tqdm(val_iter, position=0):
-                input_total, bonus_round_novel_outcome_idx, task_types = offset(batch);
+                input_total, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
                 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
                 new_v, new_h, new_dU, new_trace, (last_layer_out, output, value), mod = model.train().forward(\
                                                                                         x = input_total,\
@@ -303,8 +315,11 @@ for idx, batch in tqdm(train_iter, position=0):
 
                 # get reward
                 got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
-                reward = (1-task_types)*(got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)).float()\
-                    +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
+                chose_novel = got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)
+                reward = (1-task_types)*(chose_novel).float()*novel_outcome\
+                        +(1-task_types)*(~chose_novel).float()*(-novel_outcome)\
+                        +(task_types)*(chose_novel).float()*(-novel_outcome)\
+                        +(task_types)*(~chose_novel).float()*(novel_outcome);
                 valReward += reward.mean()/val_batches;
                 if ((jdx+1)%50==0):
                     print(valReward)
