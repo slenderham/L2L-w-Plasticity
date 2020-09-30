@@ -57,41 +57,53 @@ def offset(batch):
     # batch X num_pics X 1 X img_size X img_size
     train_inputs, _ = batch["train"]
     # get the image input: [num_pics] different omniglot pictures, 
-    perm_order = torch.randperm(num_pics_per_trial*num_trials).to(device);
-    orders = torch.zeros(num_pics_per_trial*num_trials);
+    perm_order = torch.argsort(torch.rand(batch_size, num_pics_per_trial*num_trials), dim=-1).to(device);
+    for i in range(batch_size):
+        if perm_order[i, -1]//num_pics_per_trial < num_trials-2:
+            for j in range(num_pics_per_trial*num_trials):
+                if perm_order[i, j]//num_pics_per_trial >= num_trials-2:
+                    perm_order[[i,i], [j,-1]] = perm_order[[i,i], [-1,j]]
+                    break;
+
+    orders = torch.zeros(batch_size, num_pics_per_trial*num_trials);
     cum_freq = 0;
     for i, f in enumerate(freqs):
-        orders[perm_order[cum_freq:cum_freq+f]] = i;
+        for j in range(batch_size):
+            orders[[j]*f, perm_order[j, cum_freq:cum_freq+f]] = i;
         cum_freq += f;
     assert(cum_freq==sum(freqs));
     # shuffle input
-    train_inputs_shuff = train_inputs[:,orders.long()];
+    train_inputs_shuff = torch.zeros(batch_size, num_pics_per_trial*num_trials, *train_inputs.shape[2:]);
+    for i in range(batch_size):
+        train_inputs_shuff[i] = train_inputs[[i]*num_pics_per_trial*num_trials, orders[i].long()];
     assert(train_inputs_shuff.shape==(batch_size, num_pics_per_trial*num_trials, 1, img_size, img_size))
     # separate the sequence into trials, and add blank screen after each trial
     train_inputs_shuff = train_inputs_shuff.reshape(batch_size, num_trials, num_pics_per_trial, 1, img_size, img_size);
     train_inputs_shuff = torch.cat([train_inputs_shuff, torch.zeros(batch_size, num_trials, 1, 1, img_size, img_size)], dim=2)
-    train_inputs_shuff = train_inputs_shuff.reshape(batch_size, num_trials*(num_pics_per_trial+1), 1, img_size, img_size);
+    train_inputs_shuff = train_inputs_shuff.flatten(1, 2)
     
     # add each presented image after entire trial to query for rating (each for a few timesteps)
     bonus_round_idx = torch.argsort(torch.rand(size=(batch_size, num_pics)), dim=-1);
+    bonus_round_train_inputs = torch.zeros_like(train_inputs);
     for i in range(batch_size):
-        train_inputs[i] = train_inputs[[i for i in range(num_pics)], bonus_round_idx[i]];
+        bonus_round_train_inputs[i] = train_inputs[[i]*num_pics, bonus_round_idx[i]];
     bonus_round_novel_outcome_idx = torch.argmax(bonus_round_idx, dim=-1);
 
-    train_inputs = torch.repeat_interleave(train_inputs, repeats=num_repeats, dim=1);
-    train_inputs_shuff = torch.cat([train_inputs_shuff, train_inputs, torch.zeros(batch_size, num_repeats, 1, img_size, img_size)], dim=1); 
+    bonus_round_train_inputs = torch.repeat_interleave(bonus_round_train_inputs, repeats=num_repeats, dim=1);
+    train_inputs_shuff = torch.cat([train_inputs_shuff, bonus_round_train_inputs, torch.zeros(batch_size, num_repeats, 1, img_size, img_size)], dim=1); 
     train_inputs_shuff = train_inputs_shuff.transpose(0, 1);
     # batch_size, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats+num_repeats, 1, img_size, img_size
 
     # calculate outcomes based on task type
     outcomes = torch.zeros(batch_size, num_trials, 1);
-    novel_outcome_loc = perm_order[-1]//num_pics_per_trial;
+    novel_outcome_loc = perm_order[:,-1]//num_pics_per_trial;
     for i in range(batch_size):
         for j in range(num_trials):
-            if (task_types[i]==0 and j==novel_outcome_loc) or (task_types[i]==1 and j!=novel_outcome_loc):
+            if (task_types[i]==0 and j==novel_outcome_loc[i]) or (task_types[i]==1 and j!=novel_outcome_loc[i]):
                 outcomes[i,j,0] = novel_outcome[i]; # if novel stim-novel outcome and the trial contains the novel stim, 
             else:
                 outcomes[i,j,0] = -novel_outcome[i];
+    
     outcomes_total = torch.zeros(batch_size, num_trials, num_pics_per_trial, 1)
     outcomes_total = torch.cat([outcomes_total, outcomes.reshape(batch_size, num_trials, 1, 1)], dim=2);
     outcomes_total = outcomes_total.reshape(batch_size, num_trials*(num_pics_per_trial+1), 1);
@@ -107,14 +119,28 @@ def offset(batch):
     phase_ind[:, num_trials*(num_pics_per_trial+1)+num_pics*num_repeats:, 3] = 1.0
     phase_ind = phase_ind.transpose(0, 1)
 
+    # fig, axes = plt.subplots(num_trials, num_pics_per_trial+1)
+    # for i in range(num_trials):
+    #     for j in range(num_pics_per_trial+1):
+    #         axes[i][j].imshow(train_inputs_shuff[i*(num_pics_per_trial+1)+j,0,0])
+    # plt.show()
+
+    # fig, axes = plt.subplots(num_pics, num_repeats)
+    # for i in range(num_pics):
+    #     for j in range(num_repeats):
+    #         axes[i][j].imshow(train_inputs_shuff[num_trials*(num_pics_per_trial+1)+i*num_repeats+j,0,0])
+    # plt.show()
+
+    # print(bonus_round_novel_outcome_idx[0])
+
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
 
     return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], \
-                    bonus_round_novel_outcome_idx.to(device), task_types;
+                    bonus_round_novel_outcome_idx.to(device), task_types.to(device);
 
-batch_size = 32;
+batch_size = 64;
 num_pics = 3;
-len_seq = 10;
+len_seq = 1;
 num_trials = 5;
 num_pics_per_trial = 5;
 num_repeats = 4;
@@ -171,7 +197,7 @@ model = SGRU(in_type = "image+continuous",\
             out_type = "continuous",\
             num_token = 0,\
             input_dim = 5,\
-            hidden_dim = 64,\
+            hidden_dim = 128,\
             out_dim = 1,\
             num_layers = 1,\
             activation="relu",\
@@ -239,8 +265,8 @@ for idx, batch in tqdm(train_iter, position=0):
         got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
         # if novel-reward, get reward if chose novel and get novel image
         # if novel-nonreward, get reward didn't get novel image, or 
-        reward = task_types*got_novel_trial.float()*(action_idx!=bonus_round_novel_outcome_idx).float()*\
-                +(1-task_types)*((not got_novel_trial) | (action_idx==bonus_round_novel_outcome_idx)).float();
+        reward = (1-task_types)*got_novel_trial.float()*(action_idx==bonus_round_novel_outcome_idx).float()\
+                +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
 
         episode_buffer.actions.append(action_idx); # time_step, batch size, 1
         episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
@@ -276,8 +302,8 @@ for idx, batch in tqdm(train_iter, position=0):
                 action_idx = m.sample();
 
                 # get reward
-                reward = task_types*got_novel_trial.float()*(action_idx!=bonus_round_novel_outcome_idx).float()*\
-                    +(1-task_types)*((not got_novel_trial) | (action_idx==bonus_round_novel_outcome_idx)).float();
+                reward = (1-task_types)*got_novel_trial.float()*(action_idx==bonus_round_novel_outcome_idx).float()\
+                    +(task_types)*((~got_novel_trial) | (action_idx!=bonus_round_novel_outcome_idx)).float();
                 valReward += reward.mean()/val_batches;
                 if ((jdx+1)%50==0):
                     print(valReward)
