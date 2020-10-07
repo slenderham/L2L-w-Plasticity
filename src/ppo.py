@@ -64,8 +64,8 @@ class PPO:
             returns[-idx] = A + values[-idx];
 
         # Normalizing the advantages:
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8);
         advantages = returns-values;
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8);
 
         # Optimize policy for K epochs:
         for _ in range(self.K_epochs):

@@ -13,7 +13,7 @@ import os
 import tensortools as tt
 
 from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, IncrementalPCA
 import torch
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.svm import LinearSVC
@@ -106,7 +106,7 @@ def vis_parafac(x, rank, plot_type):
             axes[1, i].set_xlabel("Time", fontsize=5)
             mat_factor = np.outer(U.factors[2][:,i], U.factors[3][:,i])
             # lim = max(np.max(mat_factor), -np.min(mat_factor));
-            axes[2, i].imshow(mat_factor, cmap='seismic');
+            im = [2, i].imshow(mat_factor, cmap='seismic');
             axes[2, i].set_xlabel("Presynaptic Neuron", fontsize=5)
             axes[2, i].set_ylabel("Postsynaptic Neuron", fontsize=5)
             fig.colorbar(im, ax=axes[3, i])
@@ -143,11 +143,14 @@ def vis_parafac(x, rank, plot_type):
     fig.tight_layout()
     plt.show();
 
-def vis_pca(x, tags=None, labels=None):
+def vis_pca(x, tags=None, labels=None, incremental=False):
     assert(len(x.shape)==2);
     assert(len(tags.shape)==1);
     assert(x.shape[0]==tags.shape[0]);
-    pca = PCA();
+    if incremental:
+        pca = IncrementalPCA(batch_size=16);
+    else:
+        pca = PCA()
     low_x = pca.fit_transform(x);
     axe = plt.figure().add_subplot(111, projection='3d')
     bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
@@ -155,8 +158,8 @@ def vis_pca(x, tags=None, labels=None):
     scatters = []
     for i in range(tags.max()+1):
         scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1],low_x[tags==i][:,2], c=tags[tags==i], norm=norm, cmap='tab10'));
-    # legend = axe.legend(scatters, labels)
-    # axe.add_artist(legend)
+    legend = axe.legend(scatters, labels)
+    axe.add_artist(legend)
     axe.plot(low_x[:,0], low_x[:,1], low_x[:,2],alpha=0.1, c='black');
     axe.set_xlabel('PC1')
     axe.set_ylabel('PC2')

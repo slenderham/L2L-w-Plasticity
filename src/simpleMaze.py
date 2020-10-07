@@ -110,7 +110,7 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
                                     (torch.as_tensor(obs, dtype=torch.float).flatten().unsqueeze(0).to(device), action.to(device), torch.as_tensor(reward).reshape(1,1).to(device)), dim=1
                                 ).unsqueeze(0);
             # one iter of network, notice that the reward is from the previous time step
-            new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = model.train().forward(\
+            new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), mod = model.train().forward(\
                                                           x = total_input.to(device),\
                                                           h = new_h, \
                                                           v = new_v, \
@@ -172,7 +172,7 @@ def evaluate():
                                         (torch.as_tensor(obs, dtype=torch.float).flatten().unsqueeze(0).to(device), action.to(device), torch.as_tensor(reward).reshape(1,1).to(device)), dim=1
                                     ).unsqueeze(0);
                 # one iter of network, notice that the reward is from the previous time step
-                new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), (mod, mod_e, mod_m) = model.eval().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m) = model.eval().forward(\
                                                             x = total_input.to(device),\
                                                             h = new_h, \
                                                             v = new_v, \
@@ -209,20 +209,20 @@ mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 feats = trajectory.get_feats(Qls, Qrs);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
-axe = vis_pca(torch.tensor(vs).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
-axe.set_title("PCA of Cell State")
-plt.show()
-axe = vis_pca(torch.tensor(dUs).flatten(2,3).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
-axe.set_title("PCA of Fast Weight")
-plt.show()
+# axe = vis_pca(torch.tensor(vs).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+# axe.set_title("PCA of Cell State")
+# plt.show()
+# axe = vis_pca(torch.tensor(dUs).flatten(2,3).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+# axe.set_title("PCA of Fast Weight")
+# plt.show()
 
-# headers = ['Location', "intercept"]
-# headers.extend(dictvec.feature_names_);
-# results_to_print = [];
-# for k in results.keys():
-#     results_to_print.append([k]);
-#     results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
-# print(tabulate(results_to_print, headers=headers, tablefmt="github"))
+headers = ['Location', "intercept"]
+headers.extend(dictvec.feature_names_);
+results_to_print = [];
+for k in results.keys():
+    results_to_print.append([k]);
+    results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
+print(tabulate(results_to_print, headers=headers, tablefmt="github"))
 
 # for k in results.keys():
 #     print(k)

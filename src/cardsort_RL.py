@@ -10,7 +10,7 @@ from lamb import Lamb
 from ppo import PPO, Memory
 import tqdm
 from decomposition import *
-%matplotlib qt
+# %matplotlib qt
 '''
     simpler WCST
     the episodes are predetermined, but whether the dimension to attend to changes from trial to trial
@@ -43,7 +43,7 @@ def sample_card(chunks, bits, val):
     '''
     global data;
 
-    randInts = torch.tensor(np.random.randint(0, val, size=(chunks,)));
+    randInts = torch.from_numpy(np.random.randint(0, val, size=(chunks,)));
     pattern = data[randInts, :];
 
     return randInts.to(device), pattern.to(device);
@@ -79,7 +79,7 @@ else:
 
 param_groups = add_weight_decay(model);
 
-optimizer = optim.AdamW(param_groups, lr=1e-3, eps=1e-5);
+optimizer = optim.AdamW(param_groups, lr=1e-3);
 # optimizer = optim.SGD(param_groups, lr=1);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
@@ -106,6 +106,7 @@ ppo = PPO(policy = model, \
           optimizer = optimizer, \
           seq_len = len_seq,\
           buffer_size = buffer_size,\
+          gamma=0.1, lambd=0.9,\
          );
 
 for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
@@ -145,7 +146,7 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
                                     (feedback, patterns, torch.zeros(1, 1, bits+val+1, device=device)), dim=0
                                 );
             # one iter of network, notice that the reward is from the previous time step
-            new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), _ = model.train().forward(\
+            new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), _ = model.train().forward(\
                                                           x = total_input.to(device),\
                                                           h = new_h, \
                                                           v = new_v, \
@@ -234,7 +235,7 @@ with torch.no_grad():
                                 );
             # one iter of network, notice that the reward is from the previous time step
             for inp in total_input:
-                new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = model.train().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), mod = model.train().forward(\
                                   x = inp.unsqueeze(0).to(device),\
                                   h = new_h, \
                                   v = new_v, \
@@ -256,25 +257,25 @@ with torch.no_grad():
             cumReward[-1].append(1-reward.item());
 
 print(np.mean(cumReward));
-# mean_rwd = np.mean(cumReward, axis=0);
-# std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
-# plt.plot(np.arange(len_seq), mean_rwd);
-# plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
+mean_rwd = np.mean(cumReward, axis=0);
+std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
+plt.plot(np.arange(len_seq), mean_rwd);
+plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
 # # plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
 # plt.imshow(cumReward)
-# plt.xlabel('Intra-Episode Timestep')
-# plt.ylabel('Episodes')
-# plt.ylabel('Error Rate')
-# plt.title('Errors in Episodes of WCST')
-# plt.show()
+plt.xlabel('Intra-Episode Timestep')
+plt.ylabel('Episodes')
+plt.ylabel('Error Rate')
+plt.title('Errors in Episodes of WCST')
+plt.show()
 
 
 hs = torch.stack([torch.cat(h, dim=0) for h in hs], dim=0).transpose(0, 1) # from batch first to timestep first
 # vs = vs.reshape((len_seq//20, (chunks+2)*20, *vs.shape[1:]))
 dUs = torch.stack([torch.cat(dU, dim=0) for dU in dUs], dim=0).transpose(0, 1)
 # dUs = dUs.reshape((len_seq//20, (chunks+2)*20, *dUs.shape[1:]))
-dims = torch.tensor(dims).long().transpose(0, 1)
-actions = torch.tensor(actions).long().transpose(0, 1)
+dims = torch.as_tensor(dims).long().transpose(0, 1)
+actions = torch.as_tensor(actions).long().transpose(0, 1)
 # vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
 # vis_parafac(dUs.detach().numpy(), rank=3, plot_type='wcst_mat')
 # plt.plot(forbenius_norm(dUs.numpy(), 1))
@@ -289,26 +290,26 @@ actions = torch.tensor(actions).long().transpose(0, 1)
 # axe = vis_pca(dUs.flatten(2,3).flatten(0,1), actions.flatten(), labels=[i for i in range(val)]);
 # axe.set_title("PCA of Fast Weight")
 
-mean_scores = [];
-std_scores = [];
+# mean_scores = [];
+# std_scores = [];
 
-for t in range(100):
-    print(t)
-    scores_hs_ans = svc_cv(hs[t::100].flatten(0,1), actions[t::100].flatten())
-    scores_dUs_ans = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), actions[t::100].flatten())
-    scores_hs_task = svc_cv(hs[t::100].flatten(0,1), dims[t::100].flatten())
-    scores_dUs_task = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), dims[t::100].flatten())
-    mean_scores.append([scores_hs_ans.mean(), scores_dUs_ans.mean(), scores_hs_task.mean(), scores_dUs_task.mean()])
-    std_scores.append([1.96*scores_hs_ans.std(), 1.96*scores_dUs_ans.std(), 1.96*scores_hs_task.std(), 1.96*scores_dUs_task.std()])
+# for t in range(100):
+#     print(t)
+#     scores_hs_ans = svc_cv(hs[t::100].flatten(0,1), actions[t::100].flatten())
+#     scores_dUs_ans = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), actions[t::100].flatten())
+#     scores_hs_task = svc_cv(hs[t::100].flatten(0,1), dims[t::100].flatten())
+#     scores_dUs_task = svc_cv(dUs.flatten(2,3)[t::100].flatten(0,1), dims[t::100].flatten())
+#     mean_scores.append([scores_hs_ans.mean(), scores_dUs_ans.mean(), scores_hs_task.mean(), scores_dUs_task.mean()])
+#     std_scores.append([1.96*scores_hs_ans.std(), 1.96*scores_dUs_ans.std(), 1.96*scores_hs_task.std(), 1.96*scores_dUs_task.std()])
 
-mean_scores = np.array(mean_scores)
-std_scores = np.array(std_scores)
+# mean_scores = np.array(mean_scores)
+# std_scores = np.array(std_scores)
 
-labels = ['Cell State X Action', 'Fast Weight X Action', 'Cell State X Task', 'Fast Weight X Task']
-fig, ax = plt.subplots()
-for i in range(4):
-    eb = plt.errorbar(x=range(100), \
-        y=mean_scores[:,i], \
-        yerr=std_scores[:,i], label=i);
-fig.legend()
-fig.show()
+# labels = ['Cell State X Action', 'Fast Weight X Action', 'Cell State X Task', 'Fast Weight X Task']
+# fig, ax = plt.subplots()
+# for i in range(4):
+#     eb = plt.errorbar(x=range(100), \
+#         y=mean_scores[:,i], \
+#         yerr=std_scores[:,i], label=i);
+# fig.legend()
+# fig.show()

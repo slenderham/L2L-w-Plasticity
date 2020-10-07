@@ -59,13 +59,15 @@ class SGRUCell(torch.nn.Module):
         mods = [];
         ss = [];
         ms = [];
+        dUs = []
         for c in range(x.shape[0]):
             v, h, dU, trace, (mod, s, m) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
             curr_out.append(h);
             mods.append(mod);
             ss.append(s);
             ms.append(m);
-        return v, h, dU, trace, torch.stack(curr_out), (torch.stack(mods), torch.stack(ss), torch.stack(ms));
+            dUs.append(dU);
+        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms));
 
     def _forward_step(self, x, h, v, dU, trace, **kwargs):
         freeze_fw = kwargs.get("freeze_fw")
@@ -225,12 +227,12 @@ class SGRU(torch.nn.Module):
             prev_out = x;
 
         for l, rnn in enumerate(self.rnns):
-            v[l], h[l], dU[l], trace[l], prev_out, mod = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l], **kwargs);
+            v[l], h[l], dU[l], trace[l], prev_out, fws, mod = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l], **kwargs);
 
         action_logit = self.decoder(prev_out);
         value = self.critic(prev_out);
 
-        return v, h, dU, trace, (prev_out, action_logit, value), mod;
+        return v, h, dU, trace, (prev_out, fws, action_logit, value), mod;
 
     def get_init_states(self, batch_size, device):
         v_0 = [];
