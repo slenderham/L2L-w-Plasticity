@@ -342,7 +342,7 @@ class Trajectories:
         return stgs;
 
 
-    def get_feats(self, Qls, Qrs):
+    def get_feats(self, Qls, Qrs, abe):
         '''
             activity ~ R(t-1) + C(t-1) + C(t) + dQ(t) + sQ(t) + Qc(t-1) + pos(t)
         '''        
@@ -355,16 +355,19 @@ class Trajectories:
             for i in range(len(goal_times[t])-1):
                 for j in range(goal_times[t][i], goal_times[t][i+1]):
                     feats[self.maze.mirror_positions[pos[t][j]]].append({
-                        "prev_outcome": outcomes[t][i],
                         "prev_choice": 1.0 if choices[t][i]=="left" else 0.0,
-                        "choice_X_outcome": outcomes[t][i] * (1.0 if choices[t][i]=="left" else 0.0),
-                        "q_prev_c": Qls[t][i] if choices[t][i]=="left" else Qrs[t][i],
                         "rpe": outcomes[t][i]-(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
+                        "updated_qc": abe[0]*outcomes[t][i]+(1-abe[0])*(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
                         "upcoming_choice": 1.0 if choices[t][i+1]=="left" else 0.0,
                         "q_upcoming_choice": Qls[t][i+1] if choices[t][i+1]=="left" else Qrs[t][i+1],
                         "qsum": Qls[t][i+1]+Qrs[t][i+1],
                         "qdiff": Qls[t][i+1]-Qrs[t][i+1],
                     });
+
+                        # "q_prev_c": Qls[t][i] if choices[t][i]=="left" else Qrs[t][i],
+                        # "prev_outcome": outcomes[t][i],
+                        # "choice_X_outcome": outcomes[t][i] * (1.0 if choices[t][i]=="left" else 0.0),
+
 
         return feats;
 
@@ -382,6 +385,7 @@ class Trajectories:
         acts_flat = {};
         for k, v in activities_by_pos.items():
             acts_flat[k] = np.array(v);
+            acts_flat[k] = (acts_flat[k]-acts_flat[k].mean(axis=0))/(acts_flat[k].std(axis=0)+1e-6)
 
         all_feats = [entry for f in feats.copy().values() for entry in f];
 
@@ -393,12 +397,14 @@ class Trajectories:
         feats_flat = {};
         for k, v in feats.items():
             feats_flat[k] = feat_fit.transform(v);
+            feats_flat[k] = (feats_flat[k]-feats_flat[k].mean(axis=0))/(feats_flat[k].std(axis=0)+1e-6)
             feats_flat[k] = sm.add_constant(feats_flat[k], prepend=True, has_constant="raise");
             feats_flat[k] = pd.DataFrame(feats_flat[k], columns=headers)
 
         results = defaultdict(list);
 
         for k in feats_flat.keys():
+
             for n in range((len(activities[0][0]))):
                 results[k].append(sm.OLS(acts_flat[k][:,n], feats_flat[k]).fit());
 

@@ -74,7 +74,7 @@ class PPO:
             loss = 0;
             # for each timestep, give a batch of old observations
             for s, a, r, adv, old_log_prob in zip(old_states, old_actions, returns, advantages, old_logprobs):
-                new_v, new_h, new_dU, new_trace, (last_layer_out, log_probs, value), mod = self.policy.train().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fw, log_probs, value), mod = self.policy.train().forward(\
                                                       x = s,\
                                                       h = new_h, \
                                                       v = new_v, \

@@ -59,15 +59,17 @@ class SGRUCell(torch.nn.Module):
         mods = [];
         ss = [];
         ms = [];
+        rs = []
         dUs = []
         for c in range(x.shape[0]):
-            v, h, dU, trace, (mod, s, m) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
+            v, h, dU, trace, (mod, s, m, r) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
             curr_out.append(h);
             mods.append(mod);
             ss.append(s);
             ms.append(m);
+            rs.append(r);
             dUs.append(dU);
-        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms));
+        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms), torch.stack(rs));
 
     def _forward_step(self, x, h, v, dU, trace, **kwargs):
         freeze_fw = kwargs.get("freeze_fw")
@@ -112,7 +114,7 @@ class SGRUCell(torch.nn.Module):
             new_trace_E = trace_E
             new_trace_e = trace_e
         
-        return v, new_h, dU, (new_trace_e, new_trace_E), (mod, s, m);
+        return v, new_h, dU, (new_trace_e, new_trace_E), (mod, s, m, r);
 
     def reset_parameter(self):
         for name, param in self.named_parameters():

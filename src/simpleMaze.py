@@ -13,7 +13,7 @@ from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
 from decomposition import forbenius_norm, vis_lda, vis_pca
-# %matplotlib qt
+%matplotlib qt
 
 torch.manual_seed(0);
 np.random.seed(0);
@@ -53,9 +53,8 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5);
 
 train_epochs = 0;
-val_epochs = 10;
+val_epochs = 30;
 buffer_size = 50;
-num_samples = 50;
 max_steps = 600;
 
 episode_buffer = Memory();
@@ -164,7 +163,7 @@ def evaluate():
         obs = maze._get_obs();
         done = False;
         trajectory.add_new_episode();
-        states.append([[new_v[0], new_dU[0], torch.zeros(1, 16), torch.zeros(1, 1), torch.zeros(1, 1)]]);
+        states.append([[new_v[0], new_dU[0], torch.zeros(1, 16), torch.zeros(1, 1), torch.zeros(1, 1), torch.zeros(1, 1)]]);
 
         with torch.no_grad():
             while(not done):
@@ -172,14 +171,14 @@ def evaluate():
                                         (torch.as_tensor(obs, dtype=torch.float).flatten().unsqueeze(0).to(device), action.to(device), torch.as_tensor(reward).reshape(1,1).to(device)), dim=1
                                     ).unsqueeze(0);
                 # one iter of network, notice that the reward is from the previous time step
-                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m) = model.eval().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m, mod_r) = model.eval().forward(\
                                                             x = total_input.to(device),\
                                                             h = new_h, \
                                                             v = new_v, \
                                                             dU = new_dU, \
                                                             trace = new_trace);
 
-                states[-1].append([new_v[0], new_dU[0], mod[0], mod_e[0], mod_m[0]]);
+                states[-1].append([new_v[0], new_dU[0], mod[0], mod_e[0], mod_m[0], mod_r[0]]);
 
                 # sample an action
                 m = torch.distributions.Categorical(logits = log_probs[-1]);
@@ -203,10 +202,11 @@ print(abe, nll)
 mods = [[j[2].squeeze().detach().numpy() for j in t] for t in states]
 vs = [[j[0].squeeze().detach().numpy() for j in t] for t in states]
 dUs = [[j[1].squeeze().detach().numpy() for j in t] for t in states]
-mod_es = [[j[3].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
+mod_ss = [[j[3].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
+mod_rs = [[j[5].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 
-feats = trajectory.get_feats(Qls, Qrs);
+feats = trajectory.get_feats(Qls, Qrs, abe);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
 # axe = vis_pca(torch.tensor(vs).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
@@ -219,10 +219,42 @@ results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats
 headers = ['Location', "intercept"]
 headers.extend(dictvec.feature_names_);
 results_to_print = [];
-for k in results.keys():
-    results_to_print.append([k]);
-    results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
-print(tabulate(results_to_print, headers=headers, tablefmt="github"))
+# vars_to_plot = ["prev_outcome", "q_prev_c", "prev_choice", "upcoming_choice"]
+# var_names = dict(zip(vars_to_plot, ['Previous Outcome', 'Q of Previous Choice', 'Previous Choice', 'Upcoming Choice']))
+vars_to_plot = ["rpe", "updated_qc", "prev_choice", "upcoming_choice"]
+var_names = dict(zip(vars_to_plot, ['Reward Prediction Error', 'Updated Q', 'Previous Choice', 'Upcoming Choice']))
+fig, axes = plt.subplots(2, 2)
+i = 0;
+loc_names = {
+    (2, 3): 'S',
+    (1, 3): 'G1',
+    (1, 2): 'R',
+    (4, 3): 'G2'
+}
+locs = [(2, 3), (1, 3), (1, 2), (1, 1), (2, 1), (3, 1), (4, 1), (4, 2), (4, 3), (3, 3)]
+tick_labels = [loc_names.get(k, ' ') for k in locs];
+
+
+for v in vars_to_plot:
+    values = []
+    cis = []
+    for k in locs:
+        results_to_print.append([k]);
+        results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
+        values.append(results[k][0].params[v])
+        cis.append(results[k][0].bse[v])
+    values = np.array(values)
+    cis = np.array(cis)
+    axes[i//2][i%2].bar(list(range(len(values))), values, color=plt.get_cmap('tab10').colors[i], alpha=0.5)
+    axes[i//2][i%2].errorbar(list(range(len(values))), values, 1.96*cis, capsize=1, c=plt.get_cmap('tab10').colors[i], fmt='.')
+    axes[i//2][i%2].set_xticks(list(range(len(values))))
+    axes[i//2][i%2].set_xticklabels(tick_labels)
+    axes[i//2][i%2].set_title(var_names[v])
+    i += 1;
+
+# print(tabulate(results_to_print, headers=headers, tablefmt="github"))
+fig.show()
+
 
 # for k in results.keys():
 #     print(k)

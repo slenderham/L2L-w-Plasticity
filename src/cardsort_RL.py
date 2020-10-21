@@ -29,7 +29,7 @@ def add_weight_decay(model):
         else:
             decay.append(param);
 
-    return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': 0.}];
+    return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': 1e-3}];
 
 def sample_card(chunks, bits, val):
 
@@ -68,7 +68,7 @@ model = SGRU(in_type = "continuous",\
              out_dim = val,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 32\
+             mod_rank = 32,\
             );
 
 if torch.cuda.is_available():
@@ -86,7 +86,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 n_epochs = 0;
 len_seq = 80;
 buffer_size = 50;
-num_samples = 20;
+num_samples = 50;
 
 # data = torch.tensor(ortho_group.rvs(bits), dtype=torch.float, device=device);
 data = torch.eye(bits);
@@ -194,8 +194,8 @@ cumReward = [];
 actions = [];
 with torch.no_grad():
     # freeze_fw_start = np.random.randint(0, len_seq)
-    # freeze_fw_start = 100
     # print(freeze_fw_start)
+    freeze_fw_start = 10000
     for j in range(num_samples):
 
         dUs.append([]);
@@ -240,7 +240,8 @@ with torch.no_grad():
                                   h = new_h, \
                                   v = new_v, \
                                   dU = new_dU, \
-                                  trace = new_trace);
+                                  trace = new_trace,
+                                  freeze_fw = [idx>freeze_fw_start]*5);
                 dUs[-1].append(new_dU[0]);
                 hs[-1].append(new_h[0]);
                 dims[-1].append(newDim);
@@ -261,7 +262,7 @@ mean_rwd = np.mean(cumReward, axis=0);
 std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
 plt.plot(np.arange(len_seq), mean_rwd);
 plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
-# # plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
+# plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
 # plt.imshow(cumReward)
 plt.xlabel('Intra-Episode Timestep')
 plt.ylabel('Episodes')
@@ -284,6 +285,11 @@ actions = torch.as_tensor(actions).long().transpose(0, 1)
 # axe.set_title("LDA of Cell State")
 # axe = vis_lda(dUs.flatten(2,3).flatten(0,1), actions.flatten());
 # axe.set_title("LDA of Fast Weight")
+
+axe = vis_lda(hs.flatten(0,1), dims.flatten());
+axe.set_title("LDA of Cell State")
+axe = vis_lda(dUs.flatten(2,3).flatten(0,1), dims.flatten());
+axe.set_title("LDA of Fast Weight")
 
 # axe = vis_pca(hs.flatten(0,1), actions.flatten(), labels=[i for i in range(val)]);
 # axe.set_title("PCA of Cell State")

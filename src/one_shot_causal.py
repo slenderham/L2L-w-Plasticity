@@ -13,6 +13,8 @@ from PIL import Image
 from lamb import Lamb
 import pickle
 from decomposition import *
+from fitQ import fitCausal
+# %matplotlib qt
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
@@ -104,6 +106,7 @@ def offset(batch):
 
     train_inputs_shuff = torch.repeat_interleave(train_inputs_shuff, repeats=num_repeats, dim=0)
     # num_repeats* (num_trials*(num_pics_per_trial+1)+num_pics+1), batch_size, 1, img_size, img_size
+    train_inputs_shuff = (train_inputs_shuff-train_inputs_shuff.mean())/(train_inputs_shuff.std()+1e-8);
 
     # calculate outcomes based on task type
     outcomes = torch.zeros(batch_size, num_trials, 1);
@@ -144,9 +147,11 @@ def offset(batch):
     assert(train_inputs_shuff.shape[:2]==outcomes_total.shape[:2]==phase_ind.shape[:2])
 
     return [train_inputs_shuff.to(device), 8*torch.cat([phase_ind, outcomes_total], dim=-1).to(device)], \
-                    bonus_round_novel_outcome_idx.to(device), task_types.to(device), novel_outcome.to(device);
+            orders.to(device), outcomes.to(device), novel_stim_loc.to(device),\
+            bonus_round_idx.to(device), bonus_round_novel_outcome_idx.to(device), \
+            task_types.to(device), novel_outcome.to(device);
 
-batch_size = 16;
+batch_size = 4;
 num_pics = 3;
 len_seq = 1;
 num_trials = 5;
@@ -160,7 +165,7 @@ img_size = 28;
 train_batches = 0;
 val_batches = 25;
 val_every = 25;
-test_batches = 10;
+test_batches = 20;
 assert(val_every%len_seq==0)
 task_type_name = ["Novel Image -> Novel Outcome", "Novel Image -> Nonnovel Outcome"]
 
@@ -216,12 +221,14 @@ model = SGRU(in_type = "image+continuous",\
 
 param_groups = add_weight_decay(model);
 
-optimizer = optim.AdamW(param_groups, lr=lr);
+optimizer = optim.AdamW(param_groups, lr=lr, eps=1e-5);
+scheduler1 = optim.lr_scheduler.StepLR(optimizer, 6000, 0.1)
 
 try:
     state_dict = torch.load("model_one_shot", map_location=device);
     print(model.load_state_dict(state_dict["model_state_dict"]));
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+    # scheduler1.load_state_dict(state_dict["scheduler_state_dict"]);
     cumReward = state_dict['cumReward'];print(cumReward[-1])
     print("model loaded successfully");
 except:
@@ -230,7 +237,6 @@ except:
 print(model);
 print(optimizer);
 
-cumReward = []
 episode_buffer = Memory()
 ppo = PPO(policy = model, \
           optimizer = optimizer, \
@@ -250,7 +256,7 @@ for idx, batch in tqdm(train_iter, position=0):
     if train_batches==0:
         break;
     with torch.no_grad():
-        input_total, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
+        input_total, orders, outcomes, novel_stim_loc, bonus_round_orders, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
         new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
         new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fw, output, value), mod = model.train().forward(\
                                                                                 x = input_total,\
@@ -285,13 +291,13 @@ for idx, batch in tqdm(train_iter, position=0):
 
     ppo.update(episode_buffer, task='one_shot', num_pics=num_pics, num_repeats=num_repeats);
     episode_buffer.clear_memory();
-    # scheduler1.step();
+    scheduler1.step();
 
     if (idx+1)%val_every==0:
         with torch.no_grad():
             valReward = 0;
             for jdx, batch in tqdm(val_iter, position=0):
-                input_total, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
+                input_total, orders, outcomes, novel_stim_loc, bonus_round_orders, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
                 new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
                 new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fw, output, value), mod = model.eval().forward(\
                                                                                         x = input_total,\
@@ -320,6 +326,7 @@ for idx, batch in tqdm(train_iter, position=0):
                     cumReward.append(valReward);
                     torch.save({'model_state_dict': model.state_dict(), \
                                 'optimizer_state_dict': optimizer.state_dict(), \
+                                # 'scheduler_state_dict': scheduler1.state_dict(), \
                                 'cumReward': cumReward}, 'model_one_shot');
                     break;
 
@@ -330,15 +337,23 @@ for idx, batch in tqdm(train_iter, position=0):
 all_task_types = [];
 all_novel_outcomes = [];
 all_actions = [];
+all_bonus_round_stim_orders = [];
 all_bonus_round_novel_outcome_idx = [];
+all_stim_orders = []
+all_outcomes = []
+all_novel_stim_loc = []
 hs = [];
 dUs = [];
+ms = [];
+ss = [];
+rs = [];
+ratings = [];
 
 with torch.no_grad():
     testReward = 0;
     testCorrect = 0;
     for jdx, batch in tqdm(test_iter, position=0):
-        input_total, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
+        input_total, orders, outcomes, novel_stim_loc, bonus_round_orders, bonus_round_novel_outcome_idx, task_types, novel_outcome = offset(batch);
         new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=batch_size, device=device);
         new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fw, output, value), mod = model.eval().forward(\
                                                                                 x = input_total,\
@@ -350,6 +365,7 @@ with torch.no_grad():
         # sample an action
         log_probs = output[-(num_pics+1)*num_repeats:-num_repeats:num_repeats]; # should be num_pics X batch_size X 1
         log_probs = log_probs.squeeze(-1).t();
+        ratings.append(log_probs);
         log_probs = torch.nn.functional.log_softmax(log_probs, -1);
         m = torch.distributions.Categorical(logits = log_probs);
         action_idx = m.sample();
@@ -372,8 +388,15 @@ with torch.no_grad():
         all_novel_outcomes.append(novel_outcome);
         all_actions.append(action_idx);
         all_bonus_round_novel_outcome_idx.append(bonus_round_novel_outcome_idx);
+        all_bonus_round_stim_orders.append(bonus_round_orders);
+        all_stim_orders.append(orders.reshape(batch_size, num_trials, num_pics_per_trial))
+        all_novel_stim_loc.append(novel_stim_loc);
+        all_outcomes.append(outcomes.squeeze(-1))
         hs.append(last_layer_out)
         dUs.append(last_layer_fw)
+        ms.append(mod[2])
+        ss.append(mod[1])
+        rs.append(mod[3])
 
         if (jdx+1)%test_batches==0:
             print(testReward)
@@ -384,17 +407,45 @@ with torch.no_grad():
 all_task_types = torch.cat(all_task_types, dim=0)
 all_novel_outcomes = torch.cat(all_novel_outcomes, dim=0)
 all_actions = torch.cat(all_actions, dim=0)
+all_stim_orders = torch.cat(all_stim_orders, dim=0)
+ratings = (torch.cat(ratings, dim=0)/5).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
 all_bonus_round_novel_outcome_idx = torch.cat(all_bonus_round_novel_outcome_idx, dim=0) 
+all_outcomes = torch.cat(all_outcomes, dim=0)
+all_bonus_round_stim_orders = torch.cat(all_bonus_round_stim_orders, dim=0)
+all_novel_stim_loc = torch.cat(all_novel_stim_loc, dim=0)
 hs = torch.cat(hs, dim=1)
 dUs = torch.cat(dUs, dim=1)
+ms = torch.cat(ms, dim=1)
+ss = torch.cat(ss, dim=1)
+rs = torch.cat(rs, dim=1)
 
+deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes, ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
+# deltastau, lrs, mse = fitCausal(all_stim_orders, (all_novel_outcomes.unsqueeze(-1)!=all_outcomes).float()*2-1, ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
+
+sum_alphas = all_alphas.sum(-1, keepdims=True)
+all_vars = all_alphas*(sum_alphas-all_alphas)/(sum_alphas**2*(sum_alphas+1))
+causal_unc = all_vars.sum(-1)
+
+# actual_lrs = torch.split(ms.squeeze(), [(num_pics_per_trial+1)*num_repeats]*num_trials+[num_repeats], dim=0)
+# actual_lrs = torch.stack(actual_lrs[:num_trials])[:,-num_repeats:].mean(1); # -> num_trials X batch size
+
+
+# plt.plot(ms.squeeze())
+# plt.show()
+# plt.plot(ss.squeeze())
+# plt.show()
+# plt.plot(rs.squeeze())
+# plt.show()
 # pca by trial type 
-trial_types = all_task_types * 2 + (all_novel_outcomes+1)/2
-trial_types = trial_types.reshape(1, test_batches*batch_size).expand(hs.shape[0], hs.shape[1]).int()
-axes = vis_pca(hs.flatten(0, 1), trial_types.flatten(), \
-    ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"]);
-axes.set_title("PCA of Cell State")
+# trial_types = all_task_types * 2 + (all_novel_outcomes+1)/2
+# trial_types = trial_types.reshape(1, test_batches*batch_size).expand(hs.shape[0], hs.shape[1]).int()
+# axes = vis_pca(hs.flatten(0, 1), trial_types.flatten(), \
+#     ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"]);
+# axes.set_title("PCA of Cell State")
 
-axes = vis_pca(dUs.flatten(0, 1).flatten(1, 2), trial_types.flatten(), \
-    ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"], incremental=True);
-axes.set_title("PCA of Fast Weight")
+# axes = vis_pca(dUs.flatten(0, 1).flatten(1, 2), trial_types.flatten(), \
+#     ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"], incremental=True);
+# axes.set_title("PCA of Fast Weight")
+# %%
+
+# %%
