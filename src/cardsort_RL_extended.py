@@ -46,8 +46,7 @@ def sample_card(chunks, val, dim):
     randInts = torch.from_numpy(np.random.randint(0, val, size=(num_cards+1, chunks)));
     correctInd = torch.from_numpy(np.random.randint(1, num_cards+1, size=(1,))).squeeze();
     randInts[dim, correctInd] = randInts[dim, 0];
-    randInts = torch.cat([randInts, torch.ones(num_cards+1, 1)*val], dim=1)
-    randInts = randInts.reshape((num_cards+1)*(chunks+1))
+    randInts = randInts.reshape((num_cards+1)*(chunks))
     pattern = data[randInts, :]
     return randInts.to(device), pattern.to(device), correctInd.to(device)
 
@@ -65,7 +64,7 @@ sampler = lambda dim: sample_card(chunks, val, dim);
 model = SGRU(in_type = "continuous",\
              out_type = "categorical",\
              num_token = 0,\
-             input_dim = 2*val+2,\
+             input_dim = chunks*val+val+2,\
              hidden_dim = 64,\
              out_dim = val,\
              num_layers = 1,\
@@ -91,7 +90,7 @@ buffer_size = 50;
 num_samples = 50;
 
 # data = torch.tensor(ortho_group.rvs(bits), dtype=torch.float, device=device);
-data = torch.eye(val+1);
+data = torch.eye(val);
 
 episode_buffer = Memory();
 cumReward = [];
@@ -136,14 +135,14 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
 
             # RNN works with size seq len X batch size X input size, in this case # chunks X 1 X pattern size + |A| + 1
             patterns = torch.cat(
-                                    (instrPattern.reshape((num_cards+1)*(chunks+1), 1, val+1), torch.zeros(((num_cards+1)*(chunks+1), 1, val+1), device=device)), dim=2
+                                    (instrPattern.reshape((num_cards+1), 1, chunks*val), torch.zeros(((num_cards+1), 1, val+1), device=device)), dim=2
                                 );
             # feedback from previous trial, 1 X 1 X [0]*pattern_size + previous action + previous reward
             feedback = torch.cat(
                                     (torch.zeros((1, val+1), device=device), action.detach(), reward.detach()), dim=1
-                                ).reshape(1, 1, 2*val+2);
+                                ).reshape(1, 1, chunks*val+val+1);
 
-            total_input = torch.cat((feedback, patterns, torch.zeros(1, 1, 2*val+2, device=device)), dim=0);
+            total_input = torch.cat((feedback, patterns, torch.zeros(1, 1, chunks*val+val+1, device=device)), dim=0);
 
             # one iter of network, notice that the reward is from the previous time step
             new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), _ = model.train().forward(\
