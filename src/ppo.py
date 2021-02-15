@@ -82,7 +82,7 @@ class PPO:
                                                       trace = new_trace);
                 
                 if task=='one_shot':
-                    log_probs = log_probs[-(kwargs['num_pics']+1)*kwargs['num_repeats']:-kwargs['num_repeats']:kwargs['num_repeats']]; # should be num_pics X batch_size X 1
+                    log_probs = log_probs[-kwargs['num_pics']*kwargs['num_repeats']-1:-kwargs['num_repeats']:kwargs['num_repeats']]; # should be num_pics X batch_size X 1
                     log_probs = log_probs.squeeze(-1).t();
                     log_probs = torch.nn.functional.log_softmax(log_probs, -1);
                 else:

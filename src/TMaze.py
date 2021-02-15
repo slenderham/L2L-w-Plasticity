@@ -341,33 +341,37 @@ class Trajectories:
                 stgs[-1].append(int(t[i]["stage"]));
         return stgs;
 
-
-    def get_feats(self, Qls, Qrs, abe):
+    def get_feats(self, Qls, Qrs, abe, acts):
         '''
-            activity ~ R(t-1) + C(t-1) + C(t) + dQ(t) + sQ(t) + Qc(t-1) + pos(t)
+            activity ~ R(t-1) + C(t-1) + C(t) + dQ(t) + Qc(t-1)
         '''        
         feats = defaultdict(list);
         pos = [[s["pos"] for s in t] for t in self.traj];
         choices, outcomes = self.get_choices_and_outcome();
         goal_times = self.get_goal_times();
+        print([len(t) for t in goal_times])
+        tasks = self.get_task()
         for t in range(len(self.traj)):
             #for each trajectory, for each timestep in that trajectory, there should be a feature vector corresponding to that 
             for i in range(len(goal_times[t])-1):
                 for j in range(goal_times[t][i], goal_times[t][i+1]):
                     feats[self.maze.mirror_positions[pos[t][j]]].append({
+                        "art-1": acts[t][j-1],
+                        "art-2": acts[t][j-2],
+                        "art-3": acts[t][j-3],
                         "prev_choice": 1.0 if choices[t][i]=="left" else 0.0,
+                        "task_type": tasks[t][i],
                         "rpe": outcomes[t][i]-(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
                         "updated_qc": abe[0]*outcomes[t][i]+(1-abe[0])*(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
                         "upcoming_choice": 1.0 if choices[t][i+1]=="left" else 0.0,
-                        "q_upcoming_choice": Qls[t][i+1] if choices[t][i+1]=="left" else Qrs[t][i+1],
-                        "qsum": Qls[t][i+1]+Qrs[t][i+1],
                         "qdiff": Qls[t][i+1]-Qrs[t][i+1],
+                        "qsum": Qls[t][i+1]+Qrs[t][i+1],
+                        "q_upcoming_choice": Qls[t][i+1] if choices[t][i+1]=="left" else Qrs[t][i+1],
                     });
-
+                        # "qsum": Qls[t][i+1]+Qrs[t][i+1],
                         # "q_prev_c": Qls[t][i] if choices[t][i]=="left" else Qrs[t][i],
                         # "prev_outcome": outcomes[t][i],
                         # "choice_X_outcome": outcomes[t][i] * (1.0 if choices[t][i]=="left" else 0.0),
-
 
         return feats;
 
@@ -404,7 +408,6 @@ class Trajectories:
         results = defaultdict(list);
 
         for k in feats_flat.keys():
-
             for n in range((len(activities[0][0]))):
                 results[k].append(sm.OLS(acts_flat[k][:,n], feats_flat[k]).fit());
 

@@ -12,7 +12,7 @@ from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
-from decomposition import forbenius_norm, vis_lda, vis_pca
+from decomposition import forbenius_norm, vis_lda, vis_pca, sig2asterisk
 %matplotlib qt
 
 torch.manual_seed(0);
@@ -53,7 +53,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5);
 
 train_epochs = 0;
-val_epochs = 30;
+val_epochs = 60;
 buffer_size = 50;
 max_steps = 600;
 
@@ -130,10 +130,6 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
             episode_buffer.rewards[-1].append(reward);
             episode_buffer.values[-1].append(value[-1]);
 
-            # maze.render();
-            # display.clear_output(wait=True);
-            # display.display(plt.gcf())
-
     # update the policy every [buffer_size] steps
     if (i+1)%buffer_size==0:
         ppo.update(episode_buffer);
@@ -146,7 +142,6 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
                     'optimizer_state_dict': optimizer.state_dict(), 
                     'cumReward': cumReward}, 
                     'model_maze');
-
 
 def evaluate():
 
@@ -189,6 +184,10 @@ def evaluate():
                 obs, reward, done, info = maze.step(action_idx.item());
                 trajectory.add_info(info);
 
+                # maze.render();
+                # display.clear_output(wait=True);
+                # display.display(plt.gcf())
+
     actions, rewards = trajectory.get_choices_and_outcome();
     alphabetaeps, Qls, Qrs, nll = fitQ(actions, rewards);
 
@@ -198,6 +197,8 @@ def evaluate():
 
 abe, Qls, Qrs, nll, states, actions, rewards, trajectory = evaluate();
 print(abe, nll)
+ep_rwds = [np.mean(rewards[i]) for i in range(val_epochs)]
+print(np.mean(ep_rwds), np.std(ep_rwds)*1.96/np.sqrt(val_epochs))
 
 mods = [[j[2].squeeze().detach().numpy() for j in t] for t in states]
 vs = [[j[0].squeeze().detach().numpy() for j in t] for t in states]
@@ -206,13 +207,13 @@ mod_ss = [[j[3].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 mod_rs = [[j[5].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 
-feats = trajectory.get_feats(Qls, Qrs, abe);
+feats = trajectory.get_feats(Qls, Qrs, abe, mod_ms);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
-# axe = vis_pca(torch.tensor(vs).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+# axe = vis_pca(torch.tensor(vs), tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
 # axe.set_title("PCA of Cell State")
 # plt.show()
-# axe = vis_pca(torch.tensor(dUs).flatten(2,3).flatten(0,1), 2*np.array(trajectory.get_task()).flatten()+np.array(trajectory.get_stage()).flatten(), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+# axe = vis_pca(torch.tensor(dUs).flatten(2,3), tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
 # axe.set_title("PCA of Fast Weight")
 # plt.show()
 
@@ -221,28 +222,38 @@ headers.extend(dictvec.feature_names_);
 results_to_print = [];
 # vars_to_plot = ["prev_outcome", "q_prev_c", "prev_choice", "upcoming_choice"]
 # var_names = dict(zip(vars_to_plot, ['Previous Outcome', 'Q of Previous Choice', 'Previous Choice', 'Upcoming Choice']))
-vars_to_plot = ["rpe", "updated_qc", "prev_choice", "upcoming_choice"]
-var_names = dict(zip(vars_to_plot, ['Reward Prediction Error', 'Updated Q', 'Previous Choice', 'Upcoming Choice']))
-fig, axes = plt.subplots(2, 2)
+vars_to_plot = ["rpe", "updated_qc", \
+                "qdiff", "qsum", \
+                "prev_choice", "upcoming_choice", \
+                "q_upcoming_choice", "task_type", ]
+
+var_names = dict(zip(vars_to_plot, ['Reward Prediction Error', 'Updated Q value',\
+                                    'Difference in Q', 'Sum of Q',\
+                                    'Previous Choice', 'Upcoming Choice',\
+                                    'Q of upcoming choice', 'Reward Location']))
+
+fig, axes = plt.subplots(4, 2)
 i = 0;
 loc_names = {
-    (2, 3): 'S',
+    (3, 3): 'S',
     (1, 3): 'G1',
     (1, 2): 'R',
     (4, 3): 'G2'
 }
-locs = [(2, 3), (1, 3), (1, 2), (1, 1), (2, 1), (3, 1), (4, 1), (4, 2), (4, 3), (3, 3)]
+locs = [(1, 2), (1, 1), (2, 1), (3, 1), (4, 1), (4, 2), (4, 3), (3, 3), (2, 3), (1, 3)]
 tick_labels = [loc_names.get(k, ' ') for k in locs];
 
 
 for v in vars_to_plot:
     values = []
     cis = []
+    sig = []
     for k in locs:
         results_to_print.append([k]);
         results_to_print[-1].extend(['{:.2f} ± {:.2f} (p={:.3f})'.format(m, 1.96*s, p) for (m, s, p) in zip(results[k][0].params, results[k][0].bse, results[k][0].pvalues)])
         values.append(results[k][0].params[v])
         cis.append(results[k][0].bse[v])
+        sig.append(sig2asterisk(results[k][0].pvalues[v]))
     values = np.array(values)
     cis = np.array(cis)
     axes[i//2][i%2].bar(list(range(len(values))), values, color=plt.get_cmap('tab10').colors[i], alpha=0.5)
@@ -250,11 +261,21 @@ for v in vars_to_plot:
     axes[i//2][i%2].set_xticks(list(range(len(values))))
     axes[i//2][i%2].set_xticklabels(tick_labels)
     axes[i//2][i%2].set_title(var_names[v])
+    limits = (np.abs(values).max()+np.sign(values.max())*(1.96*cis.max()))*2
+    axes[i//2][i%2].set_ylim(-limits, limits)
+    for j in range(len(values)):
+        axes[i//2][i%2].text(j-0.4, values[j]+np.sign(values[j])*limits*0.25, sig[j])
     i += 1;
 
 # print(tabulate(results_to_print, headers=headers, tablefmt="github"))
 fig.show()
 
+# ax_q = plt.subplot()
+# ax_q.plot(Qls[0], label=r'$Q_l$')
+# ax_q.plot(Qrs[0], label=r'$Q_r$')
+# ax_q.set_xlabel('Trial number')
+# ax_q.set_ylabel('Value function')
+# ax_q.legend()
 
 # for k in results.keys():
 #     print(k)
@@ -281,6 +302,3 @@ fig.show()
 #         print(stats.pearsonr(h2modweight[sig_q_coeff_pos], q_coeffs));
 #     except:
 #         None
-
-
-# %%

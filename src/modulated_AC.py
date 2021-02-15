@@ -120,10 +120,10 @@ class SGRUCell(torch.nn.Module):
         for name, param in self.named_parameters():
             if "h2h.weight" in name:
                 for i in range(3):
-                    torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:], gain=math.sqrt(2));
+                    torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.weight" in name:
                 for i in range(3):
-                    torch.nn.init.kaiming_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
+                    torch.nn.init.xavier_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.bias" in name:
                 torch.nn.init.zeros_(param);
             elif "h2h.bias" in name :
@@ -222,8 +222,10 @@ class SGRU(torch.nn.Module):
         if self.in_type=="categorical":
             prev_out = self.encoder(x);
         elif self.in_type=="image+continuous":
-            num_steps, batch_size = x[0].shape[:2]
-            img = self.encoder(x[0].flatten(0, 1)).reshape(num_steps, batch_size, -1);
+            batch_size, num_pics = x[0].shape[:2]
+            img = self.encoder(x[0].flatten(0, 1)).reshape(batch_size, num_pics, -1);
+            shuffle_inputs = x[2]
+            img = shuffle_inputs(img);
             prev_out = torch.cat([img, x[1]], dim=-1);
         else:
             prev_out = x;

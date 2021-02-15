@@ -3,6 +3,7 @@ import torch.distributions as distributions
 import numpy as np
 from scipy.optimize import minimize
 from scipy import special
+from scipy.stats import entropy
 
 def fitQ(actions, rewards):
     res = minimize(fun=lambda alphabetaeps, actions, rewards : loglikelihood(alphabetaeps, actions, rewards)[-1],
@@ -49,15 +50,20 @@ def loglikelihood(alphabetaeps, actions, rewards):
     return Qls, Qrs, nll;
 
 def fitCausal(stims, outcomes, ratings, bonus_round_stims, prior=[1,1,1]):
-    res = minimize(fun=lambda deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior: ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)[-1],
-                    x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.5+1.8)], 
+    best_res = None;
+    best_cost = +1e6
+    for i in range(1):
+        res = minimize(fun=lambda deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior: ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)[-1],
+                    x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.3+1.8)], 
                     args=(stims, outcomes, ratings, bonus_round_stims, prior),
                     bounds=((0, np.inf), (0, np.inf), (0, np.inf), (0, np.inf)));
-    deltasgammatau = res.x; 
+        deltasgammatau = res.x
+        lrs, all_alphas, mse = ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)
+        if mse<best_cost:
+            deltasgammatau = res.x; 
+            best_cost = mse;
 
-    lrs, all_alphas, mse = ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)
-
-    return deltasgammatau, lrs, all_alphas, mse;
+    return deltasgammatau, lrs, all_alphas, best_cost;
 
 def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior=[1,1,1]):
     delta_p = deltasgammatau[0]
@@ -74,6 +80,7 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
     assert(stims.max()+1==len(prior));
 
     mse = 0
+    # kl = 0
 
     for i in range(batch_size):
         alphas = np.array(prior).astype(float);
@@ -95,9 +102,11 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
         all_alphas[i][-1] = alphas
         means = alphas/(alphas.sum()+1e-6)
         rev_ind = np.argsort(bonus_round_stims[i].numpy());
-        # print(ratings[[i]*num_pics, rev_ind])
-        # print(means)
         mse += np.sum((ratings[[i]*num_pics, rev_ind].numpy()-means)**2)
+        # print(ratings[[i]*num_pics, rev_ind].numpy(), means)
+        # kl += entropy(ratings[[i]*num_pics, rev_ind].numpy(), means+1e-6) \
+            # + entropy(means+1e-6, ratings[[i]*num_pics, rev_ind].numpy())
+        # print(ratings[[i]*num_pics, rev_ind].numpy(), means)
     print(deltasgammatau, mse)
 
     return all_learning_rates, all_alphas, mse

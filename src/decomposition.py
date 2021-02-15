@@ -10,7 +10,8 @@ import torch
 import numpy as np
 import pickle
 import os
-import tensortools as tt
+# import tensortools as tt
+from tensorly.decomposition import parafac
 
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA, IncrementalPCA
@@ -86,7 +87,8 @@ def vis_parafac(x, rank, plot_type):
     # tt.visualization.plot_objective(ens, ax=axes[0])
     # tt.visualization.plot_similarity(ens, ax=axes[1]);
     assert(plot_type in ['omni_vec', 'omni_mat', 'wcst_vec', 'wcst_mat'])
-    U = tt.cp_als(x, rank=rank)
+    # U = tt.cp_als(x, rank=rank)
+    U = parafac(x, rank=rank)
 
     if (plot_type=='omni_vec'):
         fig, axes = plt.subplots(3, rank);
@@ -106,10 +108,10 @@ def vis_parafac(x, rank, plot_type):
             axes[1, i].set_xlabel("Time", fontsize=5)
             mat_factor = np.outer(U.factors[2][:,i], U.factors[3][:,i])
             # lim = max(np.max(mat_factor), -np.min(mat_factor));
-            im = [2, i].imshow(mat_factor, cmap='seismic');
+            im = axes[2, i].imshow(mat_factor, cmap='seismic');
             axes[2, i].set_xlabel("Presynaptic Neuron", fontsize=5)
             axes[2, i].set_ylabel("Postsynaptic Neuron", fontsize=5)
-            fig.colorbar(im, ax=axes[3, i])
+            fig.colorbar(im, ax=axes[2, i])
     elif (plot_type=='wcst_vec'):
         fig, axes = plt.subplots(4, rank);
         for i in range(rank):
@@ -141,29 +143,51 @@ def vis_parafac(x, rank, plot_type):
 
     fig.suptitle("")
     fig.tight_layout()
-    plt.show();
+    plt.show()
+    return U
 
-def vis_pca(x, tags=None, labels=None, incremental=False):
-    assert(len(x.shape)==2);
-    assert(len(tags.shape)==1);
+def vis_pca(x, labels=None, tags=None, incremental=False, threeD=False):
+    assert(len(x.shape)==3);
+    assert(len(tags.shape)==2);
+    x_unflat_shape = x.shape[:2]
+    tags_unflat = tags.copy()
+    x = x.flatten(0, 1)
+    tags = tags.flatten()
     assert(x.shape[0]==tags.shape[0]);
     if incremental:
         pca = IncrementalPCA(batch_size=16);
     else:
         pca = PCA()
     low_x = pca.fit_transform(x);
-    axe = plt.figure().add_subplot(111, projection='3d')
     bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
     norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=plt.get_cmap('tab10').N)
-    scatters = []
-    for i in range(tags.max()+1):
-        scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1],low_x[tags==i][:,2], c=tags[tags==i], norm=norm, cmap='tab10'));
-    legend = axe.legend(scatters, labels)
-    axe.add_artist(legend)
-    axe.plot(low_x[:,0], low_x[:,1], low_x[:,2],alpha=0.1, c='black');
+    
+    if threeD:
+        axe = plt.figure().add_subplot(111, projection='3d')
+        scatters = []
+        for i in range(tags.max()+1):
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], low_x[tags==i][:,2], c=tags[tags==i], norm=norm, cmap='tab10', alpha=0.1));
+        legend = axe.legend(scatters, labels)
+    else:
+        axe = plt.figure().add_subplot(111)
+        for i in range(tags.max()+1):
+            axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10', alpha=0.1);
+        axe.legend()
+    
+    low_x = low_x.reshape(*x_unflat_shape, -1)
+    
+    if threeD:
+        for i in range(x_unflat_shape[1]):
+            axe.plot(low_x[:, i, 0], low_x[:, i, 1], low_x[:, i, 2], c='k', alpha=0.01)
+    else:
+        for i in range(x_unflat_shape[1]):
+            axe.plot(low_x[:, i, 0], low_x[:, i, 1], c='k', alpha=0.01)
+    
     axe.set_xlabel('PC1')
     axe.set_ylabel('PC2')
-    axe.set_zlabel('PC3')
+    if threeD:
+        axe.add_artist(legend)
+        axe.set_zlabel('PC3')
     plt.figure().tight_layout();
     plt.show();
     return axe;
@@ -173,12 +197,12 @@ def vis_lda(x, tags):
     low_x = lda.fit_transform(x, tags);
     axe = plt.figure().add_subplot(111)
     bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
-    norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=plt.get_cmap('tab10').N)
     if tags.max()>=2:
-        scatter = axe.scatter(low_x[:,0], low_x[:,1], c=tags, alpha=0.5, norm=norm, cmap='tab10');
-        axe.plot(low_x[:,0], low_x[:,1], alpha=0.1, c='black');
-        # legend = axe.legend(*scatter.legend_elements(), title="Task Type");
-        # axe.add_artist(legend)
+        scatters = []
+        for i in range(tags.max()+1):
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=plt.get_cmap('tab10').colors[i], alpha=0.5));
+        legend = axe.legend(scatters, tags, title="Task Type");
+        axe.add_artist(legend)
         plt.figure().tight_layout();
         axe.set_xlabel('LD1')
         axe.set_ylabel('LD2')
@@ -196,3 +220,15 @@ def svc_cv(x, y):
     clf = LinearSVC();
     scores = cross_val_score(clf, x, y, cv=5, scoring='f1_macro')
     return scores;
+
+def sig2asterisk(p):
+    if p>0.05:
+        return '    '
+    elif p>0.01:
+        return '  * '
+    elif p>0.001:
+        return ' ** '
+    elif p>0.0001:
+        return ' ***'
+    else:
+        return '****'
