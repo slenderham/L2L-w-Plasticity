@@ -94,8 +94,8 @@ hp['rules'] = hp['rule_trains']
 # Turn into rule_trains format
 hp['rule_probs'] = None
 # Set default as 1.
-rule_prob = np.array(
-        [1 for r in hp['rule_trains']])
+rule_prob_map = {'contextdm1': 5, 'contextdm2': 5}
+rule_prob = np.array([rule_prob_map.get(r, 1.) for r in hp['rule_trains']])
 hp['rule_probs'] = list(rule_prob/np.sum(rule_prob))
 
 model = SGRU(in_type = "continuous",\
