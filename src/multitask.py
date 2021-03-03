@@ -1,4 +1,5 @@
 # %%
+from collections import defaultdict
 import torch
 from modulated_AC import SGRU
 import tasks
@@ -11,8 +12,8 @@ from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
-from decomposition import *
-%matplotlib qt
+# from decomposition import *
+# %matplotlib qt
 
 torch.manual_seed(0);
 np.random.seed(0);
@@ -41,7 +42,7 @@ n_eachring = 32
 n_input, n_output = 1+num_ring*n_eachring, n_eachring+1
 hp = {
         # batch size for training
-        'batch_size_train': 64,
+        'batch_size_train': 2,
         # batch_size for testing
         'batch_size_test': 512,
         # input type: normal, multi
@@ -105,7 +106,7 @@ model = SGRU(in_type = "continuous",\
              out_dim = n_output,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 16,\
+             mod_rank = 32,\
              approx_value=False\
             ).to(device);
 
@@ -113,10 +114,8 @@ param_groups = add_weight_decay(model);
 
 optimizer = optim.AdamW(param_groups, lr=1e-3);
 
-train_epochs = 100;
-val_epochs = 10;
+train_epochs = 100000;
 val_every = 50;
-max_steps = 600;
 
 cumReward = [];
 
@@ -132,27 +131,32 @@ except:
 print(model);
 print(optimizer);
 
+total_loss = 0
+total_acc = 0
+rule_acc = defaultdict(lambda:[0,0])
+
 for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     # initialize loss and reward
-    new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=1, device=device);
-    done = False;
+    new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=2, device=device);
 
     rule_train_now = hp['rng'].choice(hp['rule_trains'], p=hp['rule_probs'])
     # Generate a random batch of trials.
     # Each batch has the same trial length
-    support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
-            batch_size=hp['batch_size_train'])
+    total_input_support = [];
+    for i in range(5):
+        support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
+                batch_size=hp['batch_size_train'])
 
-    # support set for quick task adaptation
-    inputs_support = torch.from_numpy(support_trial.x)
-    targets_support = torch.from_numpy(support_trial.y)
+        # support set for quick task adaptation
+        inputs_support = torch.from_numpy(support_trial.x)
+        targets_support = torch.from_numpy(support_trial.y)
 
-    inputs_support = torch.cat([inputs_support, torch.zeros(1, *inputs_support.shape[1:])], dim=0)
-    targets_support = torch.cat([torch.zeros(1, *targets_support.shape[1:]), targets_support], dim=0)
+        inputs_support = torch.cat([inputs_support, torch.zeros(1, *inputs_support.shape[1:])], dim=0)
+        targets_support = torch.cat([torch.zeros(1, *targets_support.shape[1:]), targets_support], dim=0)
 
-    total_input_support = torch.cat([inputs_support, targets_support, \
-                                        torch.ones(*inputs_support.shape[:2], 1), \
-                                        torch.zeros(*inputs_support.shape[:2], 1)], dim=-1)
+        total_input_support.append(torch.cat([inputs_support, targets_support, \
+                                            torch.ones(*inputs_support.shape[:2], 1), \
+                                            torch.zeros(*inputs_support.shape[:2], 1)], dim=-1))
 
     query_trial = tasks.generate_trials(rule_train_now, hp, 'random',
             batch_size=hp['batch_size_train'])
@@ -161,11 +165,11 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     targets_query = torch.from_numpy(query_trial.y)
     query_mask = torch.from_numpy(query_trial.c_mask)
 
-    total_input_query = torch.cat([inputs_support, torch.zeros_like(targets_query), \
+    total_input_query = torch.cat([inputs_query, torch.zeros_like(targets_query), \
                                         torch.zeros(*inputs_query.shape[:2], 1), \
                                         torch.ones(*inputs_query.shape[:2], 1)], dim=-1)
 
-    total_input = torch.cat([total_input_support, total_input_query], dim=0)
+    total_input = torch.cat([*total_input_support, total_input_query], dim=0)
 
     new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, output, value), mod = model.train().forward(\
                                                           x = total_input.to(device),\
@@ -174,20 +178,28 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
                                                           dU = new_dU, \
                                                           trace = new_trace);
 
-    
-    output = torch.exp(output)[total_input_support:] # log sigmoid to sigmoid
-    loss = torch.mean(query_mask*(output-targets_query)**2)
+    output = torch.exp(output)[-len(total_input_query):] # log sigmoid to sigmoid
+    loss = torch.mean(query_mask.to(device)*((output-targets_query.to(device))**2).flatten(0, 1))
 
     loss.backward()
     torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 1.0);
     optimizer.step();
     optimizer.zero_grad();
-    print(loss)
+
+    total_loss += loss.item();
+    angle_diffs = torch.argmax(output[-1], dim=-1)-torch.argmax(targets_query[-1].to(device), dim=-1)
+    rule_acc[rule_train_now][0] += (n_eachring//2-torch.abs(torch.abs(angle_diffs) - n_eachring//2)<=(36//(360/n_eachring))).float().mean()
+    rule_acc[rule_train_now][1] += 1
+
 
     # update the policy every [buffer_size] steps
     if (i+1)%val_every==0:
-        cumReward.append(loss)
-        print(cumReward[-1]);
+        cumReward.append(dict(rule_acc))
+        print(total_loss/val_every)
+        print(rule_acc)
+        total_loss = 0;
+        total_acc = 0;
+        rule_acc = defaultdict(lambda: [0, 0])
         # scheduler1.step();
         torch.save({'model_state_dict': model.state_dict(), 
                     'optimizer_state_dict': optimizer.state_dict(), 
