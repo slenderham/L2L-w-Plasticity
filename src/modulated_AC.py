@@ -24,14 +24,14 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, 3*hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 4*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, 3*hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 4*hidden_dim, bias=bias);
 
-        self.lnx = torch.nn.LayerNorm(3*hidden_dim);
-        self.lnh = torch.nn.LayerNorm(3*hidden_dim);
+        self.lnx = torch.nn.LayerNorm(4*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(4*hidden_dim);
 
-        self.h2mod = torch.nn.Linear(hidden_dim, 3*mod_rank, bias=bias);
+        self.h2mod = torch.nn.Linear(hidden_dim, 2*mod_rank, bias=bias);
 
         if (activation=="relu"):
             self.act = torch.nn.ReLU();
@@ -45,7 +45,6 @@ class SGRUCell(torch.nn.Module):
             self.act = Swish();
         # strength of weight modification
         self.alpha = torch.nn.Parameter(-4.5*torch.ones(1));
-        self.mod2hr = torch.nn.Linear(mod_rank, 1);
         self.mod2hs = torch.nn.Linear(mod_rank, 1);
         self.mod2hm = torch.nn.Linear(mod_rank, 1);
 
@@ -60,20 +59,22 @@ class SGRUCell(torch.nn.Module):
         ss = [];
         ms = [];
         rs = []
-        dUs = []
+        dUs = [];
+        os = [];
         for c in range(x.shape[0]):
-            v, h, dU, trace, (mod, s, m, r) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
+            v, h, dU, trace, (mod, s, m, r, o) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
             curr_out.append(h);
             mods.append(mod);
             ss.append(s);
             ms.append(m);
             rs.append(r);
             dUs.append(dU);
-        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms), torch.stack(rs));
+            os.append(o);
+        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms), torch.stack(rs), torch.stack(os));
 
     def _forward_step(self, x, h, v, dU, trace, **kwargs):
         freeze_fw = kwargs.get("freeze_fw")
-        trace_e, trace_E = trace;
+        trace_o, trace_r, trace_E = trace;
 
         # Wx = self.x2h(x);
         # Wh = self.h2h(h);
@@ -88,23 +89,27 @@ class SGRUCell(torch.nn.Module):
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        z, o, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
+        z, o, r, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
 
         o = torch.sigmoid(o);
         z = torch.sigmoid(z);
+        r = torch.sigmoid(r);
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
 
         mod = self.act(self.h2mod(new_h));
-        r, s, m = torch.split(mod, [self.mod_rank, self.mod_rank, self.mod_rank], dim=-1);
-        r = torch.sigmoid(self.mod2hr(r));
+        s, m = torch.split(mod, [self.mod_rank, self.mod_rank], dim=-1);
         s = torch.sigmoid(self.mod2hs(s)).unsqueeze(-1);
         m = torch.nn.functional.tanhshrink(self.mod2hm(m)).unsqueeze(-1);
 
         if not freeze_fw:
-            h_for_fw = o*new_h;
-            new_trace_e = (1-r)*trace_e + r*h_for_fw;
-            new_trace_E = (1-s)*trace_E + s*(torch.bmm(h_for_fw.unsqueeze(2), trace_e.unsqueeze(1)) - torch.bmm(trace_e.unsqueeze(2), h_for_fw.unsqueeze(1)));
+            new_trace_r = (1-r)*trace_r + r*new_h;
+            new_trace_o = (1-o)*trace_o + o*new_h;
+            new_trace_E = (1-s)*trace_E + s*(
+                torch.bmm((trace_o*new_h).unsqueeze(2), trace_r.unsqueeze(1)) - \
+                torch.bmm(trace_r.unsqueeze(2), (trace_o*new_h).unsqueeze(1)) + \
+                torch.bmm(new_h.unsqueeze(2), trace_r.unsqueeze(1)) - \
+                torch.bmm(trace_r.unsqueeze(2), new_h.unsqueeze(1)));
             dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
             upper = torch.relu(self.clip_val-self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
             lower = -torch.relu(self.clip_val+self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
@@ -112,9 +117,10 @@ class SGRUCell(torch.nn.Module):
             dU = torch.where(dU<lower, lower, dU);
         else:
             new_trace_E = trace_E
-            new_trace_e = trace_e
+            new_trace_o = trace_o
+            new_trace_r = trace_r
         
-        return v, new_h, dU, (new_trace_e, new_trace_E), (mod, s, m, r);
+        return v, new_h, dU, (new_trace_o, new_trace_r, new_trace_E), (mod, s, m, r, o);
 
     def reset_parameter(self):
         for name, param in self.named_parameters():
@@ -147,14 +153,15 @@ class SGRUCell(torch.nn.Module):
         h_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         v_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         dU_0 = torch.zeros(batch_size, self.hidden_dim, self.hidden_dim).to(device);
-        trace_e_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
+        trace_o_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
+        trace_r_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         trace_E_0 = torch.zeros(batch_size, self.hidden_dim, self.hidden_dim).to(device);
-        return h_0, v_0, dU_0, (trace_e_0, trace_E_0);
+        return h_0, v_0, dU_0, (trace_o_0, trace_r_0, trace_E_0);
 
 
 class SGRU(torch.nn.Module):
     def __init__(self, in_type, out_type, num_token, input_dim, hidden_dim, out_dim, num_layers=1, \
-                  mod_rank = 1, padding_idx=None, activation="swish", tie_weight=True):
+                  mod_rank = 1, padding_idx=None, activation="swish", tie_weight=True, approx_value=True):
 
         super(SGRU, self).__init__();
 
@@ -210,7 +217,10 @@ class SGRU(torch.nn.Module):
             self.decoder = torch.nn.Sequential(torch.nn.Linear(hidden_dim, out_dim), torch.nn.LogSigmoid());
 
         self.num_layers = num_layers;
-        self.critic = torch.nn.Linear(hidden_dim*num_layers, 1);
+        if approx_value:
+            self.critic = torch.nn.Linear(hidden_dim*num_layers, 1);
+        else:
+            self.critic = None;
 
         # dropouts
         self.reset_parameter();
@@ -234,7 +244,10 @@ class SGRU(torch.nn.Module):
             v[l], h[l], dU[l], trace[l], prev_out, fws, mod = rnn.forward(prev_out, h[l], v[l], dU[l], trace[l], **kwargs);
 
         action_logit = self.decoder(prev_out);
-        value = self.critic(prev_out);
+        if self.critic is not None:
+            value = self.critic(prev_out);
+        else:
+            value = None;
 
         return v, h, dU, trace, (prev_out, fws, action_logit, value), mod;
 

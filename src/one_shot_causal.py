@@ -12,7 +12,7 @@ from tqdm import tqdm
 from PIL import Image
 from lamb import Lamb
 import pickle
-from decomposition import *
+# from decomposition import *
 from fitQ import fitCausal
 from scipy.stats import spearmanr, pearsonr
 %matplotlib qt
@@ -174,7 +174,7 @@ img_size = 28;
 train_batches = 0;
 val_batches = 25;
 val_every = 25;
-test_batches = 25;
+test_batches = 5;
 assert(val_every%len_seq==0)
 task_type_name = ["Novel Image -> Novel Outcome", "Novel Image -> Nonnovel Outcome"]
 
@@ -222,7 +222,7 @@ model = SGRU(in_type = "image+continuous",\
             out_type = "continuous",\
             num_token = 0,\
             input_dim = 5,\
-            hidden_dim = 256,\
+            hidden_dim = 128,\
             out_dim = 1,\
             num_layers = 1,\
             activation="relu",\
@@ -234,7 +234,7 @@ optimizer = optim.AdamW(param_groups, lr=lr, eps=1e-4);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, 6000, 0.1)
 cumReward = []
 try:
-    state_dict = torch.load("model_one_shot", map_location=device);
+    state_dict = torch.load("model_one_shot-2", map_location=device);
     print(model.load_state_dict(state_dict["model_state_dict"]));
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
     scheduler1.load_state_dict(state_dict["scheduler_state_dict"]);
@@ -245,6 +245,7 @@ except:
 
 print(model);
 print(optimizer);
+print(scheduler1.state_dict().keys());
 
 episode_buffer = Memory()
 ppo = PPO(policy = model, \
@@ -358,6 +359,7 @@ dUs = [];
 ms = [];
 ss = [];
 rs = [];
+os = [];
 ratings = [];
 testCorrects = [];
 
@@ -409,6 +411,7 @@ with torch.no_grad():
         ms.append(mod[2])
         ss.append(mod[1])
         rs.append(mod[3])
+        os.append(mod[4])
 
         if (jdx+1)%test_batches==0:
             print(testReward)
@@ -423,7 +426,8 @@ all_novel_outcomes = torch.cat(all_novel_outcomes, dim=0)
 all_actions = torch.cat(all_actions, dim=0)
 all_stim_orders = torch.cat(all_stim_orders, dim=0)
 ratings = (torch.cat(ratings, dim=0)/20).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
-causal_ratings = (all_novel_outcomes>0).float().unsqueeze(-1)*ratings + (all_novel_outcomes<0).float().unsqueeze(-1)*(1-ratings)/2
+causal_ratings = (all_novel_outcomes<0).float().unsqueeze(-1)*ratings \
+               + (all_novel_outcomes>0).float().unsqueeze(-1)*(1-ratings)/2
 all_bonus_round_novel_outcome_idx = torch.cat(all_bonus_round_novel_outcome_idx, dim=0) 
 all_outcomes = torch.cat(all_outcomes, dim=0)
 all_bonus_round_stim_orders = torch.cat(all_bonus_round_stim_orders, dim=0)
@@ -433,10 +437,11 @@ dUs = torch.cat(dUs, dim=1)
 ms = torch.cat(ms, dim=1)
 ss = torch.cat(ss, dim=1)
 rs = torch.cat(rs, dim=1)
+os = torch.cat(os, dim=1)
 
 # deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes, ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
 # deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes==all_novel_outcomes.unsqueeze(-1), causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
-deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, 2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))-1, causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
+deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, -2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))+1, causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
 
 sum_alphas = all_alphas.sum(-1, keepdims=True)
 all_means = all_alphas/sum_alphas
@@ -526,5 +531,11 @@ axes[2].set_aspect('auto')
 # axes = vis_pca(dUs.flatten(0, 1).flatten(1, 2), trial_types.flatten(), \
 #     ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"], incremental=True);
 # axes.set_title("PCA of Fast Weight")
+
+# %%
+
+# %%
+
+# %%
 
 # %%

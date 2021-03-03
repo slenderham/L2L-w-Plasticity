@@ -280,16 +280,16 @@ t_res = []
 for i in range(len(freeze_fw_starts)-1):
     t_res.append(ttest_rel(freeze_fw_res[i], freeze_fw_res[i+1])[1])
 
-plt.bar(range(len(freeze_fw_res)), freeze_fw_res.mean(1))
-plt.errorbar(range(len(freeze_fw_res)), freeze_fw_res.mean(1), 1.96*freeze_fw_res.std(1)/num_samples**0.5, fmt='.')
-for i in range(len(freeze_fw_starts)-1):
-    y = freeze_fw_res.mean(1)[i:i+2].max()+0.05
-    plt.plot([i+0.1, i+0.1, i+0.9, i+0.9], [y, y+0.005, y+0.005, y], lw=1.5, c='k')
-    plt.text(i+0.25, y+0.01, sig2asterisk(t_res[i]))
-plt.xlabel('Start of Weight Freezing')
-plt.xticks(range(len(freeze_fw_res)), labels=list(freeze_fw_starts[:-1])+['No Freeze'])
-plt.ylabel('Error Rate')
-plt.title('Error Rate with Different Weight Freezing Times')
+# plt.bar(range(len(freeze_fw_res)), freeze_fw_res.mean(1))
+# plt.errorbar(range(len(freeze_fw_res)), freeze_fw_res.mean(1), 1.96*freeze_fw_res.std(1)/num_samples**0.5, fmt='.')
+# for i in range(len(freeze_fw_starts)-1):
+#     y = freeze_fw_res.mean(1)[i:i+2].max()+0.05
+#     plt.plot([i+0.1, i+0.1, i+0.9, i+0.9], [y, y+0.005, y+0.005, y], lw=1.5, c='k')
+#     plt.text(i+0.25, y+0.01, sig2asterisk(t_res[i]))
+# plt.xlabel('Start of Weight Freezing')
+# plt.xticks(range(len(freeze_fw_res)), labels=list(freeze_fw_starts[:-1])+['No Freeze'])
+# plt.ylabel('Error Rate')
+# plt.title('Error Rate with Different Weight Freezing Times')
 
 # print(np.mean(cumReward));
 # mean_rwd = np.mean(cumReward, axis=0);
@@ -314,8 +314,8 @@ actions = torch.as_tensor(actions).long().transpose(0, 1)
 mod_ms = torch.FloatTensor(mod_ms)
 mod_ss = torch.FloatTensor(mod_ss)
 mod_rs = torch.FloatTensor(mod_rs)
-# vis_parafac(vs.detach().numpy(), rank=3, plot_type='wcst_vec')
-# vis_parafac(dUs.detach().numpy(), rank=2, plot_type='omni_mat')
+vis_parafac(hs.reshape((len_seq//15, (chunks+2)*15, *hs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_vec')
+vis_parafac(dUs.reshape((len_seq//15, (chunks+2)*15, *dUs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_mat')
 # plt.plot(forbenius_norm(dUs.numpy(), 1))
 
 # axe = vis_lda(hs.flatten(0,1), actions.flatten());
@@ -344,14 +344,14 @@ sens = []
 
 
 
-axe = vis_pca(hs, tags=actions.numpy(), labels=[i for i in range(val)]);
-axe.set_title("PCA of Cell State")
-axe = vis_pca(dUs.flatten(2,3), tags=actions.numpy(), labels=[i for i in range(val)]);
-axe.set_title("PCA of Fast Weight")
-axe = vis_pca(hs, tags=dims.numpy(), labels=[i for i in range(val)]);
-axe.set_title("PCA of Cell State")
-axe = vis_pca(dUs.flatten(2,3), tags=dims.numpy(), labels=[i for i in range(val)]);
-axe.set_title("PCA of Fast Weight")
+# axe = vis_pca(hs, tags=actions.numpy(), labels=[f"Choice {i}" for i in range(val)]);
+# axe.set_title("PCA of Cell State")
+# axe = vis_pca(dUs.flatten(2,3), tags=actions.numpy(), labels=[f"Choice {i}" for i in range(val)]);
+# axe.set_title("PCA of Fast Weight")
+# axe = vis_pca(hs, tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)]);
+# axe.set_title("PCA of Cell State")
+# axe = vis_pca(dUs.flatten(2,3), tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)]);
+# axe.set_title("PCA of Fast Weight")
 
 # mean_scores = [];
 # std_scores = [];

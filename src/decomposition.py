@@ -3,7 +3,10 @@
 # import tensorly as tl
 from matplotlib import pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
 import colorcet as cc
 
 import torch
@@ -11,7 +14,8 @@ import numpy as np
 import pickle
 import os
 # import tensortools as tt
-from tensorly.decomposition import parafac
+from tensorly.decomposition import parafac, tucker
+from tensorly.regression import tucker_regression
 
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA, IncrementalPCA
@@ -88,7 +92,7 @@ def vis_parafac(x, rank, plot_type):
     # tt.visualization.plot_similarity(ens, ax=axes[1]);
     assert(plot_type in ['omni_vec', 'omni_mat', 'wcst_vec', 'wcst_mat'])
     # U = tt.cp_als(x, rank=rank)
-    U = parafac(x, rank=rank)
+    U = tucker(x, rank=rank, verbose=True)
 
     if (plot_type=='omni_vec'):
         fig, axes = plt.subplots(3, rank);
@@ -146,19 +150,23 @@ def vis_parafac(x, rank, plot_type):
     plt.show()
     return U
 
-def vis_pca(x, labels=None, tags=None, incremental=False, threeD=False):
-    assert(len(x.shape)==3);
+def vis_pca(x, labels=None, tags=None, threeD=False, data_type='vec'):
+    # assert(len(x.shape)==3);
     assert(len(tags.shape)==2);
     x_unflat_shape = x.shape[:2]
     tags_unflat = tags.copy()
-    x = x.flatten(0, 1)
+    x = x.flatten(0, 1).numpy()
     tags = tags.flatten()
     assert(x.shape[0]==tags.shape[0]);
-    if incremental:
-        pca = IncrementalPCA(batch_size=16);
-    else:
+    if data_type=='mat':
+        U = tucker(x, rank=3, verbose=True)
+        low_x = U.factors[0]
+    elif data_type=='vec':
         pca = PCA()
-    low_x = pca.fit_transform(x);
+        low_x = pca.fit_transform(x);
+    else:
+        raise ValueError
+    
     bounds = np.linspace(0, plt.get_cmap('tab10').N, plt.get_cmap('tab10').N+1)
     norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=plt.get_cmap('tab10').N)
     
@@ -166,28 +174,36 @@ def vis_pca(x, labels=None, tags=None, incremental=False, threeD=False):
         axe = plt.figure().add_subplot(111, projection='3d')
         scatters = []
         for i in range(tags.max()+1):
-            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], low_x[tags==i][:,2], c=tags[tags==i], norm=norm, cmap='tab10', alpha=0.1));
-        legend = axe.legend(scatters, labels)
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], low_x[tags==i][:,2], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10'));
+        # legend = axe.legend(scatters, labels)
     else:
         axe = plt.figure().add_subplot(111)
+        scatters = []
         for i in range(tags.max()+1):
-            axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10', alpha=0.1);
-        axe.legend()
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10'));
+        # legend = axe.legend(scatters, labels)
     
     low_x = low_x.reshape(*x_unflat_shape, -1)
     
     if threeD:
-        for i in range(x_unflat_shape[1]):
-            axe.plot(low_x[:, i, 0], low_x[:, i, 1], low_x[:, i, 2], c='k', alpha=0.01)
+        segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:3], 2), np.expand_dims(low_x[1:,:5,:3], 2)], axis=2)
+        segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 3))
+        lc = Line3DCollection(segments, cmap='tab10', norm=norm, alpha=1)
+        lc.set_array(tags)
+        axe.add_collection(lc)
     else:
-        for i in range(x_unflat_shape[1]):
-            axe.plot(low_x[:, i, 0], low_x[:, i, 1], c='k', alpha=0.01)
+        segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:2], 2), np.expand_dims(low_x[1:,:5,:2], 2)], axis=2)
+        segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 2))
+        print(segments.shape)
+        lc = LineCollection(segments, cmap='tab10', norm=norm, alpha=0.2)
+        lc.set_array(tags)
+        axe.add_collection(lc)
     
     axe.set_xlabel('PC1')
     axe.set_ylabel('PC2')
     if threeD:
-        axe.add_artist(legend)
         axe.set_zlabel('PC3')
+    # axe.add_artist(legend)
     plt.figure().tight_layout();
     plt.show();
     return axe;
@@ -216,9 +232,20 @@ def vis_lda(x, tags):
         axe.set_ylabel('Density')
     return axe;
 
-def svc_cv(x, y):
-    clf = LinearSVC();
-    scores = cross_val_score(clf, x, y, cv=5, scoring='f1_macro')
+def svc_cv(x, y, type='vec'):
+    if type=='vec':
+        clf = LinearSVC();
+        scores = cross_val_score(clf, x, y, cv=5, scoring='f1_macro')
+    else:
+        idx = np.random.permutation(np.arange(x.shape[0]))
+        num_samples_per_fold = x.shape[0]//5
+        scores = np.zeros(x.shape[0])
+        for i in range(5):
+            clf = tucker_regression.TuckerRegressor(1)
+            fold_idx = idx[num_samples_per_fold*i:num_samples_per_fold*(i+1)]
+            clf.fit(x[fold_idx], y[fold_idx])
+            # new_pred = 
+        
     return scores;
 
 def sig2asterisk(p):

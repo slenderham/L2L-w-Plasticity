@@ -12,7 +12,7 @@ from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
-from decomposition import forbenius_norm, vis_lda, vis_pca, sig2asterisk
+from decomposition import *
 %matplotlib qt
 
 torch.manual_seed(0);
@@ -53,7 +53,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5);
 
 train_epochs = 0;
-val_epochs = 60;
+val_epochs = 10;
 buffer_size = 50;
 max_steps = 600;
 
@@ -166,14 +166,14 @@ def evaluate():
                                         (torch.as_tensor(obs, dtype=torch.float).flatten().unsqueeze(0).to(device), action.to(device), torch.as_tensor(reward).reshape(1,1).to(device)), dim=1
                                     ).unsqueeze(0);
                 # one iter of network, notice that the reward is from the previous time step
-                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m, mod_r) = model.eval().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m, mod_r, mod_o) = model.eval().forward(\
                                                             x = total_input.to(device),\
                                                             h = new_h, \
                                                             v = new_v, \
                                                             dU = new_dU, \
                                                             trace = new_trace);
 
-                states[-1].append([new_v[0], new_dU[0], mod[0], mod_e[0], mod_m[0], mod_r[0]]);
+                states[-1].append([new_h[0], new_dU[0], mod[0], mod_e[0], mod_m[0], mod_r[0]]);
 
                 # sample an action
                 m = torch.distributions.Categorical(logits = log_probs[-1]);
@@ -210,12 +210,22 @@ mod_rs = [[j[5].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 feats = trajectory.get_feats(Qls, Qrs, abe, mod_ms);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
-# axe = vis_pca(torch.tensor(vs), tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
-# axe.set_title("PCA of Cell State")
-# plt.show()
-# axe = vis_pca(torch.tensor(dUs).flatten(2,3), tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
-# axe.set_title("PCA of Fast Weight")
-# plt.show()
+axe = vis_pca(torch.tensor(vs), data_type='vec', \
+    tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), \
+    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+axe.set_title("PCA of Cell State")
+plt.show()
+axe = vis_pca(torch.tensor(dUs), data_type='mat', \
+    tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), \
+    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+axe.set_title("PCA of Fast Weight")
+plt.show()
+
+vs = np.array(vs)
+dUs = np.array(dUs)
+
+# vis_parafac(vs.reshape(601*64), rank=4, plot_type='omni_vec')
+# vis_parafac(dUs.reshape(601*5, 64, 64), rank=4, plot_type='omni_mat')
 
 headers = ['Location', "intercept"]
 headers.extend(dictvec.feature_names_);

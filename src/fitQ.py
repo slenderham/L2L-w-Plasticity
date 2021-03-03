@@ -4,6 +4,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy import special
 from scipy.stats import entropy
+import math
 
 def fitQ(actions, rewards):
     res = minimize(fun=lambda alphabetaeps, actions, rewards : loglikelihood(alphabetaeps, actions, rewards)[-1],
@@ -52,13 +53,13 @@ def loglikelihood(alphabetaeps, actions, rewards):
 def fitCausal(stims, outcomes, ratings, bonus_round_stims, prior=[1,1,1]):
     best_res = None;
     best_cost = +1e6
+    deltasgammatau = None
     for i in range(1):
         res = minimize(fun=lambda deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior: ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)[-1],
                     x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.3+1.8)], 
                     args=(stims, outcomes, ratings, bonus_round_stims, prior),
                     bounds=((0, np.inf), (0, np.inf), (0, np.inf), (0, np.inf)));
-        deltasgammatau = res.x
-        lrs, all_alphas, mse = ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims, prior)
+        lrs, all_alphas, mse = ratingLikelihood(res.x, stims, outcomes, ratings, bonus_round_stims, prior)
         if mse<best_cost:
             deltasgammatau = res.x; 
             best_cost = mse;
@@ -86,18 +87,18 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
         alphas = np.array(prior).astype(float);
         for j in range(trials):
             counts = np.array([torch.sum(stims[i][j]==k).numpy() for k in range(num_pics)]);
-            # print(counts)
+            # print('counts', counts)
             assert(counts.sum()==im_per_trial)
             alphas = alphas*(alphas>=0);
             all_alphas[i][j] = alphas
             sum_alphas = np.sum(alphas);
             variances = (alphas*(sum_alphas-alphas))/(sum_alphas**2*(sum_alphas+1)+1e-6)
-            # print(variances)
+            # print('variances', variances)
             learning_rates = special.softmax(tau*variances, axis=-1)
-            # print(learning_rates)
+            # print('learning rate', learning_rates)
             all_learning_rates[i][j] = learning_rates
             alphas += gamma*learning_rates*outcomes[i][j].numpy()*(counts.astype(float) + delta_p*(np.arange(num_pics)==stims[i][j][0]) + delta_r*(np.arange(num_pics)==stims[i][j][-1]));
-            # print(alphas)
+            # print('alphas', alphas)
         alphas = alphas*(alphas>=0);
         all_alphas[i][-1] = alphas
         means = alphas/(alphas.sum()+1e-6)
