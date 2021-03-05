@@ -12,6 +12,12 @@ rules_dict = \
               'delaydm1', 'delaydm2', 'contextdelaydm1', 'contextdelaydm2', 'multidelaydm',
               'dmsgo', 'dmsnogo', 'dmcgo', 'dmcnogo'],
 
+    'meta' : ['fdgo', 'reactgo', 'delaygo', 
+              'fdanti', 'reactanti', 'delayanti',
+              'dm1', 'dm2', 'contextdm1', 'contextdm2',
+              'delaydm1', 'delaydm2', 'contextdelaydm1', 'contextdelaydm2',
+              'dmsgo', 'dmsnogo'],
+
     'mante' : ['contextdm1', 'contextdm2'],
 
     'oicdmc' : ['oic', 'dmc']}

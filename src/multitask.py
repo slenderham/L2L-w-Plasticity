@@ -35,14 +35,14 @@ else:
     device = torch.device("cpu");
 
 num_ring = 2
-ruleset = 'all'
+ruleset = 'meta'
 n_rule = tasks.get_num_rule(ruleset)
 
 n_eachring = 32
 n_input, n_output = 1+num_ring*n_eachring, n_eachring+1
 hp = {
         # batch size for training
-        'batch_size_train': 2,
+        'batch_size_train': 64,
         # batch_size for testing
         'batch_size_test': 512,
         # input type: normal, multi
@@ -94,7 +94,8 @@ hp['rules'] = hp['rule_trains']
 # Turn into rule_trains format
 hp['rule_probs'] = None
 # Set default as 1.
-rule_prob_map = {'contextdm1': 5, 'contextdm2': 5}
+rule_prob_map = {'contextdm1': 5, 'contextdm2': 5, 'contextdelaydm1': 5, 'contextdelaydm2': 5,
+              'dmsgo': 5, 'dmsnogo': 5, 'dmcgo': 5, 'dmcnogo': 5}
 rule_prob = np.array([rule_prob_map.get(r, 1.) for r in hp['rule_trains']])
 hp['rule_probs'] = list(rule_prob/np.sum(rule_prob))
 
@@ -102,11 +103,11 @@ model = SGRU(in_type = "continuous",\
              out_type = "binary",\
              num_token = 0,\
              input_dim = n_input+n_output+2,\
-             hidden_dim = 64,\
+             hidden_dim = 128,\
              out_dim = n_output,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 32,\
+             mod_rank = 64,\
              approx_value=False\
             ).to(device);
 
@@ -115,7 +116,8 @@ param_groups = add_weight_decay(model);
 optimizer = optim.AdamW(param_groups, lr=1e-3);
 
 train_epochs = 100000;
-val_every = 50;
+val_every = 100;
+grad_every = 1; # do gradient accumulation to mediate effect of sampling one task at a time
 
 cumReward = [];
 
@@ -137,13 +139,13 @@ rule_acc = defaultdict(lambda:[0,0])
 
 for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     # initialize loss and reward
-    new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=2, device=device);
+    new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=hp['batch_size_train'], device=device);
 
     rule_train_now = hp['rng'].choice(hp['rule_trains'], p=hp['rule_probs'])
     # Generate a random batch of trials.
     # Each batch has the same trial length
     total_input_support = [];
-    for i in range(5):
+    for _ in range(5):
         support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
                 batch_size=hp['batch_size_train'])
 
@@ -181,22 +183,27 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     output = torch.exp(output)[-len(total_input_query):] # log sigmoid to sigmoid
     loss = torch.mean(query_mask.to(device)*((output-targets_query.to(device))**2).flatten(0, 1))
 
-    loss.backward()
-    torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 1.0);
-    optimizer.step();
-    optimizer.zero_grad();
+    (loss/grad_every).backward()
+
+    if (i+1)%grad_every==0:
+        torch.nn.utils.clip_grad.clip_grad_norm_(model.parameters(), 1.0);
+        optimizer.step();
+        optimizer.zero_grad();
 
     total_loss += loss.item();
-    angle_diffs = torch.argmax(output[-1], dim=-1)-torch.argmax(targets_query[-1].to(device), dim=-1)
-    rule_acc[rule_train_now][0] += (n_eachring//2-torch.abs(torch.abs(angle_diffs) - n_eachring//2)<=(36//(360/n_eachring))).float().mean()
+    fixation_mask = (torch.argmax(targets_query[-1], dim=-1)==0).float();
+        
+    angle_diffs = (torch.argmax(output[-1], dim=-1)-torch.argmax(targets_query[-1].to(device), dim=-1))*2*np.pi/n_eachring
+    rule_acc[rule_train_now][0] += \
+        ((1-fixation_mask)*(tasks.get_dist(angle_diffs.detach().cpu())<=0.2*np.pi).float() +\
+          fixation_mask*(output[-1,:,0]>0.5).float().cpu()).mean().item()
     rule_acc[rule_train_now][1] += 1
-
 
     # update the policy every [buffer_size] steps
     if (i+1)%val_every==0:
         cumReward.append(dict(rule_acc))
         print(total_loss/val_every)
-        print(rule_acc)
+        print(sorted(rule_acc.items(), key=lambda item: item[1][0]/item[1][1]))
         total_loss = 0;
         total_acc = 0;
         rule_acc = defaultdict(lambda: [0, 0])
@@ -205,3 +212,5 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
                     'optimizer_state_dict': optimizer.state_dict(), 
                     'cumReward': cumReward}, 
                     'model_multitask');
+
+# %%
