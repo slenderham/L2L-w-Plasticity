@@ -353,7 +353,7 @@ def _contextdm(config, mode, attend_mod, **kwargs):
         stim1_locs = rng.uniform(0, 2*np.pi, (batch_size,))
         stim2_locs = (stim1_locs+stim_dist)%(2*np.pi)
 
-        stim_coh_range = np.array([0.04, 0.05, 0.08, 0.1])
+        stim_coh_range = np.array([0.1, 0.2, 0.4, 0.5])
         if ('easy_task' in config) and config['easy_task']:
             # stim_coh_range = np.array([0.1, 0.2, 0.4, 0.8])
             stim_coh_range *= 10
@@ -698,7 +698,7 @@ def _dm(config, mode, stim_mod, **kwargs):
         # stims_diff = rng.choice([0.02, 0.04, 0.08], (batch_size,)) # Encourage integration
         # stims_coh  = rng.choice([0.16, 0.32, 0.64], (batch_size,))
 
-        stim_coh_range = np.array([0.04, 0.05, 0.08, 0.1])
+        stim_coh_range = np.array([0.1, 0.2, 0.4, 0.5])
         if ('easy_task' in config) and config['easy_task']:
             # stim_coh_range = np.array([0.1, 0.2, 0.4, 0.8])
             stim_coh_range *= 10
@@ -810,7 +810,7 @@ def _delaydm(config, mode, stim_mod, **kwargs):
         stims_mean = rng.uniform(0.8,1.2,(batch_size,))
         # stims_diff = rng.choice([0.32,0.64,1.28],(batch_size,))
 
-        stim_coh_range = np.array([0.08,0.16,0.32])
+        stim_coh_range = np.array([0.16,0.32,0.64])
         if ('easy_task' in config) and config['easy_task']:
             # stim_coh_range = np.array([0.16,0.32,0.64])
             stim_coh_range *= 2
@@ -939,7 +939,7 @@ def _contextdelaydm(config, mode, attend_mod, **kwargs):
         stim1_locs = rng.uniform(0, 2*np.pi, (batch_size,))
         stim2_locs = (stim1_locs+stim_dist)%(2*np.pi)
 
-        stim_coh_range = np.array([0.08,0.16,0.32])
+        stim_coh_range = np.array([0.16,0.32,0.64])
         if ('easy_task' in config) and config['easy_task']:
             # stim_coh_range = np.array([0.16, 0.32, 0.64])
             stim_coh_range *= 2
