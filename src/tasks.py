@@ -16,7 +16,7 @@ rules_dict = \
               'fdanti', 'reactanti', 'delayanti',
               'dm1', 'dm2', 'contextdm1', 'contextdm2',
               'delaydm1', 'delaydm2', 'contextdelaydm1', 'contextdelaydm2',
-              'dmsgo', 'dmsnogo'，'dmcgo', 'dmcnogo'],
+              'dmsgo', 'dmsnogo', 'dmcgo', 'dmcnogo'],
 
     'mante' : ['contextdm1', 'contextdm2'],
 
