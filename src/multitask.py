@@ -60,7 +60,7 @@ hp = {
         # discretization time step/time constant
         'alpha': 0.2,
         # input noise
-        'sigma_x': 0.01,
+        'sigma_x': 0.0,
         # Stopping performance
         'target_perf': 1.,
         # number of units each ring
@@ -95,7 +95,7 @@ hp['rules'] = hp['rule_trains']
 hp['rule_probs'] = None
 # Set default as 1.
 rule_prob_map = {'contextdm1': 5, 'contextdm2': 5, 'contextdelaydm1': 5, 'contextdelaydm2': 5,
-              'dmsgo': 5, 'dmsnogo': 5, 'dmcgo': 5, 'dmcnogo': 5}
+              'dmsgo': 2, 'dmsnogo': 2, 'dmcgo': 2, 'dmcnogo': 2}
 rule_prob = np.array([rule_prob_map.get(r, 1.) for r in hp['rule_trains']])
 hp['rule_probs'] = list(rule_prob/np.sum(rule_prob))
 
@@ -145,7 +145,7 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     # Generate a random batch of trials.
     # Each batch has the same trial length
     total_input_support = [];
-    for _ in range(5):
+    for _ in range(10):
         support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
                 batch_size=hp['batch_size_train'])
 
