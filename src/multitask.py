@@ -103,11 +103,11 @@ model = SGRU(in_type = "continuous",\
              out_type = "binary",\
              num_token = 0,\
              input_dim = n_input+n_output+2,\
-             hidden_dim = 128,\
+             hidden_dim = 256,\
              out_dim = n_output,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 64,\
+             mod_rank = 128,\
              approx_value=False\
             ).to(device);
 
@@ -145,7 +145,7 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     # Generate a random batch of trials.
     # Each batch has the same trial length
     total_input_support = [];
-    for _ in range(10):
+    for _ in range(5):
         support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
                 batch_size=hp['batch_size_train'])
 
