@@ -15,7 +15,7 @@ import pickle
 # from decomposition import *
 from fitQ import fitCausal
 from scipy.stats import spearmanr, pearsonr
-%matplotlib qt
+# %matplotlib qt
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
@@ -160,7 +160,7 @@ def offset(batch):
             bonus_round_idx.to(device), bonus_round_novel_outcome_idx.to(device), \
             task_types.to(device), novel_outcome.to(device);
 
-batch_size = 4;
+batch_size = 64;
 num_pics = 3;
 len_seq = 1;
 num_trials = 5;
@@ -171,10 +171,10 @@ assert(sum(freqs)==num_trials*num_pics_per_trial)
 assert(len(freqs)==num_pics)
 assert(all([freqs[i]>=freqs[i+1] for i in range(num_pics-1)]));
 img_size = 28;
-train_batches = 0;
+train_batches = 10000;
 val_batches = 25;
 val_every = 25;
-test_batches = 5;
+test_batches = 20;
 assert(val_every%len_seq==0)
 task_type_name = ["Novel Image -> Novel Outcome", "Novel Image -> Nonnovel Outcome"]
 

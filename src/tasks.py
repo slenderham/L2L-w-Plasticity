@@ -14,8 +14,8 @@ rules_dict = \
 
     'meta' : ['fdgo', 'reactgo', 'delaygo', 
               'fdanti', 'reactanti', 'delayanti',
-              'dm1', 'dm2', 'contextdm1', 'contextdm2',
-              'delaydm1', 'delaydm2', 'contextdelaydm1', 'contextdelaydm2',
+              'dm1', 'dm2', 'multidm',
+              'delaydm1', 'delaydm2', 'multidelaydm',
               'dmsgo', 'dmsnogo', 'dmcgo', 'dmcnogo'],
 
     'mante' : ['contextdm1', 'contextdm2'],
