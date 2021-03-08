@@ -35,7 +35,7 @@ else:
     device = torch.device("cpu");
 
 num_ring = 2
-ruleset = 'meta'
+ruleset = 'all'
 n_rule = tasks.get_num_rule(ruleset)
 
 n_eachring = 32
@@ -103,11 +103,11 @@ model = SGRU(in_type = "continuous",\
              out_type = "binary",\
              num_token = 0,\
              input_dim = n_input+n_output+2,\
-             hidden_dim = 256,\
+             hidden_dim = 128,\
              out_dim = n_output,\
              num_layers = 1,\
              activation="relu",\
-             mod_rank = 128,\
+             mod_rank = 64,\
              approx_value=False\
             ).to(device);
 
