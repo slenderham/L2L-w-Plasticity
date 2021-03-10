@@ -222,7 +222,7 @@ model = SGRU(in_type = "image+continuous",\
             out_type = "continuous",\
             num_token = 0,\
             input_dim = 5,\
-            hidden_dim = 128,\
+            hidden_dim = 256,\
             out_dim = 1,\
             num_layers = 1,\
             activation="relu",\
@@ -234,7 +234,7 @@ optimizer = optim.AdamW(param_groups, lr=lr, eps=1e-4);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, 6000, 0.1)
 cumReward = []
 try:
-    state_dict = torch.load("model_one_shot-2", map_location=device);
+    state_dict = torch.load("model_one_shot-50", map_location=device);
     print(model.load_state_dict(state_dict["model_state_dict"]));
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
     scheduler1.load_state_dict(state_dict["scheduler_state_dict"]);

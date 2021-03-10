@@ -24,15 +24,14 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, 5*hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 4*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, 5*hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 4*hidden_dim, bias=bias);
 
-        self.lnx = torch.nn.LayerNorm(5*hidden_dim);
-        self.lnh = torch.nn.LayerNorm(5*hidden_dim);
+        self.lnx = torch.nn.LayerNorm(4*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(4*hidden_dim);
 
-        self.h2mod = torch.nn.Linear(hidden_dim, mod_rank, bias=bias);
-        self.mod2h = torch.nn.Linear(mod_rank, 1);
+        self.h2mod = torch.nn.Linear(hidden_dim, 2*mod_rank, bias=bias);
 
         if (activation=="relu"):
             self.act = torch.nn.ReLU();
@@ -46,6 +45,9 @@ class SGRUCell(torch.nn.Module):
             self.act = Swish();
         # strength of weight modification
         self.alpha = torch.nn.Parameter(-4.5*torch.ones(1));
+        self.mod2hs = torch.nn.Linear(mod_rank, 1);
+        self.mod2hm = torch.nn.Linear(mod_rank, 1);
+
         # time constant of STDP weight modification
         self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
         self.reset_parameter();
@@ -87,7 +89,7 @@ class SGRUCell(torch.nn.Module):
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        z, o, r, s, dv = torch.split(Wx+Wh, [self.hidden_dim]*5, dim=-1);
+        z, o, r, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
 
         o = torch.sigmoid(o);
         z = torch.sigmoid(z);
@@ -96,9 +98,9 @@ class SGRUCell(torch.nn.Module):
         new_h = self.act(v);
 
         mod = self.act(self.h2mod(new_h));
-        s = torch.sigmoid(s);
-        s = torch.sqrt(torch.bmm(s.unsqueeze(2), s.unsqueeze(1)));
-        m = torch.nn.functional.tanhshrink(self.mod2hm(mod)).unsqueeze(-1);
+        s, m = torch.split(mod, [self.mod_rank, self.mod_rank], dim=-1);
+        s = torch.sigmoid(self.mod2hs(s)).unsqueeze(-1);
+        m = torch.nn.functional.tanhshrink(self.mod2hm(m)).unsqueeze(-1);
 
         if not freeze_fw:
             new_trace_r = (1-r)*trace_r + r*new_h;
@@ -123,10 +125,10 @@ class SGRUCell(torch.nn.Module):
     def reset_parameter(self):
         for name, param in self.named_parameters():
             if "h2h.weight" in name:
-                for i in range(5):
+                for i in range(4):
                     torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.weight" in name:
-                for i in range(5):
+                for i in range(4):
                     torch.nn.init.xavier_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.bias" in name:
                 torch.nn.init.zeros_(param);
@@ -135,7 +137,8 @@ class SGRUCell(torch.nn.Module):
                 # param[:self.hidden_dim] = -1;
                 # param[self.hidden_dim:2*self.hidden_dim] = -1;
             elif "h2mod.weight" in name:
-                torch.nn.init.kaiming_normal_(param);
+                for i in range(2):
+                  torch.nn.init.kaiming_normal_(param[i*self.mod_rank:(i+1)*self.mod_rank,:]);
             elif "h2mod.bias" in name:
                 torch.nn.init.zeros_(param);
             elif "mod2h" in name and "weight" in name:
@@ -176,26 +179,25 @@ class SGRU(torch.nn.Module):
         if in_type=="categorical":
             self.encoder = torch.nn.Embedding(num_token, input_dim, padding_idx=padding_idx);
         elif in_type=="image+continuous":
-            self.conv1 = torch.nn.Conv2d(1, 64, 3, 1, 1); # 64@28*28
-            self.pool1 = torch.nn.MaxPool2d(2, 2); #64@14*14
-            self.bn1 = torch.nn.BatchNorm2d(64);
-            self.conv2 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@14*14
-            self.pool2 = torch.nn.MaxPool2d(2, 2); #64@7*7
-            self.bn2 = torch.nn.BatchNorm2d(64);
-            self.conv3 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@7*7
-            self.pool3 = torch.nn.MaxPool2d(2, 2); #64@3*3
-            self.bn3 = torch.nn.BatchNorm2d(64);
-            self.conv4 = torch.nn.Conv2d(64, 64, 3, 1, 1); # 64@3*3
-            self.pool4 = torch.nn.MaxPool2d(2, 2); # 64@1*1
-            self.bn4 = torch.nn.BatchNorm2d(64);
-            def encode(x):
-                x = self.bn1(torch.relu(self.pool1(self.conv1(x))));
-                x = self.bn2(torch.relu(self.pool2(self.conv2(x))));
-                x = self.bn3(torch.relu(self.pool3(self.conv3(x))));
-                x = self.bn4(torch.relu(self.pool4(self.conv4(x))));
-                x = torch.flatten(x, 1);
-                return x;
-            self.encoder = encode;
+            self.encoder = torch.nn.Sequential(
+                torch.nn.Conv2d(1, 64, 3, 1, 1, bias=False), # 64@28*28
+                torch.nn.BatchNorm2d(64),
+                torch.nn.ReLU(inplace=True),
+                torch.nn.MaxPool2d(2, 2), #64@14*14
+                torch.nn.Conv2d(64, 64, 3, 1, 1, bias=False), # 64@14*14
+                torch.nn.BatchNorm2d(64),
+                torch.nn.ReLU(inplace=True),
+                torch.nn.MaxPool2d(2, 2), #64@7*7
+                torch.nn.Conv2d(64, 64, 3, 1, 1, bias=False), # 64@7*7
+                torch.nn.BatchNorm2d(64),
+                torch.nn.ReLU(inplace=True),
+                torch.nn.MaxPool2d(2, 2), #64@3*3
+                torch.nn.Conv2d(64, 64, 3, 1, 1, bias=False), # 64@3*3
+                torch.nn.BatchNorm2d(64),
+                torch.nn.ReLU(inplace=True),
+                torch.nn.MaxPool2d(2, 2), #64@1*1
+                torch.nn.Flatten(1)
+            )
             input_dim += 64;
 
         self.rnns = [];
