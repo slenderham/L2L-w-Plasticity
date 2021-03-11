@@ -35,7 +35,7 @@ else:
     device = torch.device("cpu");
 
 num_ring = 2
-ruleset = 'all'
+ruleset = 'meta'
 n_rule = tasks.get_num_rule(ruleset)
 
 n_eachring = 32
