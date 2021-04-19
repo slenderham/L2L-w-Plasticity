@@ -24,9 +24,12 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 4*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 4*hidden_dim, bias=bias);
+
+        self.lnx = torch.nn.LayerNorm(4*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(4*hidden_dim);
 
         self.h2mod = torch.nn.Linear(hidden_dim, 2*mod_rank, bias=bias);
 
@@ -46,10 +49,6 @@ class SGRUCell(torch.nn.Module):
         self.mod2hm = torch.nn.Linear(mod_rank, 1);
 
         # time constant of STDP weight modification
-        self.tau_v = torch.nn.Parameter(-2.25*torch.ones(1));
-        self.tau_r = torch.nn.Parameter(-3.0*torch.ones(1));
-        self.tau_o = torch.nn.Parameter(-3.5*torch.ones(1));
-        self.tau_E = torch.nn.Parameter(-4.5*torch.ones(1));
         self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
         self.reset_parameter();
 
@@ -82,16 +81,19 @@ class SGRUCell(torch.nn.Module):
         # Wh[:, self.hidden_dim:2*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
 
         # preactivations
-        Wx = self.x2h(x);
+        Wx = self.lnx(self.x2h(x));
         Wh = self.h2h(h);
         Wh[:, -self.hidden_dim:] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
+        Wh = self.lnh(Wh);
 
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        dv = Wx+Wh;
+        z, o, r, dv = torch.split(Wx+Wh, [self.hidden_dim, self.hidden_dim, self.hidden_dim, self.hidden_dim], dim=-1);
 
-        z = torch.sigmoid(self.tau_v);
+        o = torch.sigmoid(o);
+        z = torch.sigmoid(z);
+        r = torch.sigmoid(r);
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
 
@@ -101,15 +103,18 @@ class SGRUCell(torch.nn.Module):
         m = torch.nn.functional.tanhshrink(self.mod2hm(m)).unsqueeze(-1);
 
         if not freeze_fw:
-            new_trace_r = (1-torch.sigmoid(self.tau_r))*trace_r + torch.sigmoid(self.tau_r)*new_h;
-            new_trace_o = (1-torch.sigmoid(self.tau_o))*trace_o + torch.sigmoid(self.tau_o)*new_h;
-            new_trace_E = (1-torch.sigmoid(self.tau_E))*trace_E + torch.sigmoid(self.tau_E)*s*(
+            new_trace_r = (1-r)*trace_r + r*new_h;
+            new_trace_o = (1-o)*trace_o + o*new_h;
+            new_trace_E = (1-s)*trace_E + s*(
                 torch.bmm((trace_o*new_h).unsqueeze(2), trace_r.unsqueeze(1)) - \
                 torch.bmm(trace_r.unsqueeze(2), (trace_o*new_h).unsqueeze(1)) + \
                 torch.bmm(new_h.unsqueeze(2), trace_r.unsqueeze(1)) - \
                 torch.bmm(trace_r.unsqueeze(2), new_h.unsqueeze(1)));
-            w_max = (torch.abs(self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8)).detach();
-            dU = (1-torch.sigmoid(self.tau_U))*dU + torch.sigmoid(self.tau_U)*(w_max-torch.abs(dU))*m*new_trace_E;
+            dU = (1-torch.sigmoid(self.tau_U))*dU+torch.sigmoid(self.tau_U)*m*new_trace_E;
+            upper = torch.relu(self.clip_val-self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            lower = -torch.relu(self.clip_val+self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            dU = torch.where(dU>upper, upper, dU);
+            dU = torch.where(dU<lower, lower, dU);
         else:
             new_trace_E = trace_E
             new_trace_o = trace_o

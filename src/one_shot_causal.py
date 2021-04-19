@@ -15,7 +15,7 @@ import pickle
 # from decomposition import *
 from fitQ import fitCausal
 from scipy.stats import spearmanr, pearsonr
-# %matplotlib qt
+%matplotlib qt
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
@@ -160,7 +160,7 @@ def offset(batch):
             bonus_round_idx.to(device), bonus_round_novel_outcome_idx.to(device), \
             task_types.to(device), novel_outcome.to(device);
 
-batch_size = 64;
+batch_size = 2;
 num_pics = 3;
 len_seq = 1;
 num_trials = 5;
@@ -171,10 +171,10 @@ assert(sum(freqs)==num_trials*num_pics_per_trial)
 assert(len(freqs)==num_pics)
 assert(all([freqs[i]>=freqs[i+1] for i in range(num_pics-1)]));
 img_size = 28;
-train_batches = 10000;
+train_batches = 0000;
 val_batches = 25;
 val_every = 25;
-test_batches = 20;
+test_batches = 10;
 assert(val_every%len_seq==0)
 task_type_name = ["Novel Image -> Novel Outcome", "Novel Image -> Nonnovel Outcome"]
 
@@ -234,7 +234,7 @@ optimizer = optim.AdamW(param_groups, lr=lr, eps=1e-4);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, 6000, 0.1)
 cumReward = []
 try:
-    state_dict = torch.load("model_one_shot-50", map_location=device);
+    state_dict = torch.load("model_one_shot-99", map_location=device);
     print(model.load_state_dict(state_dict["model_state_dict"]));
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
     scheduler1.load_state_dict(state_dict["scheduler_state_dict"]);
@@ -425,7 +425,7 @@ all_task_types = torch.cat(all_task_types, dim=0)
 all_novel_outcomes = torch.cat(all_novel_outcomes, dim=0)
 all_actions = torch.cat(all_actions, dim=0)
 all_stim_orders = torch.cat(all_stim_orders, dim=0)
-ratings = (torch.cat(ratings, dim=0)/20).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
+ratings = (torch.cat(ratings, dim=0)/10).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
 causal_ratings = (all_novel_outcomes<0).float().unsqueeze(-1)*ratings \
                + (all_novel_outcomes>0).float().unsqueeze(-1)*(1-ratings)/2
 all_bonus_round_novel_outcome_idx = torch.cat(all_bonus_round_novel_outcome_idx, dim=0) 
@@ -441,7 +441,7 @@ os = torch.cat(os, dim=1)
 
 # deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes, ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
 # deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes==all_novel_outcomes.unsqueeze(-1), causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
-deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, -2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))+1, causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
+deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, -2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))+1, causal_ratings, all_bonus_round_stim_orders);
 
 sum_alphas = all_alphas.sum(-1, keepdims=True)
 all_means = all_alphas/sum_alphas
@@ -456,8 +456,8 @@ delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
 axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
 axes[0].scatter(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), c='lightskyblue', alpha=0.5)
 r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten())
-axes[0].set_ylim([-1, 10])
-axes[0].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[0].set_ylim([-1, 10])
+# axes[0].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
 axes[0].set_xlabel('Causal Uncertainty Before Trial')
 axes[0].set_ylabel('Modulation Signal')
 axes[0].set_aspect('auto')
@@ -465,8 +465,8 @@ axes[0].set_aspect('auto')
 axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
 axes[1].scatter(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), c='lightgreen', alpha=0.5)
 r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten())
-axes[1].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[1].set_ylim([-1, 10])
+# axes[1].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[1].set_ylim([-1, 10])
 axes[1].set_xlabel('Causal Uncertainty After Trial')
 axes[1].set_ylabel('Modulation Signal')
 axes[1].set_aspect('auto')
@@ -474,8 +474,8 @@ axes[1].set_aspect('auto')
 axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_lrs.t().flatten(), 1))(np.unique(delta_unc)), c='black')
 axes[2].scatter(delta_unc.flatten(), actual_lrs.t().flatten(), c='lightcoral', alpha=0.5)
 r_val, p_val = spearmanr(delta_unc.flatten(), actual_lrs.t().flatten())
-axes[2].text(0.0, 0, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[2].set_ylim([-1, 10])
+# axes[2].text(0.0, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[2].set_ylim([-1, 10])
 axes[2].set_xlabel('Changes in Causal Uncertainty')
 axes[2].set_ylabel('Modulation Signal')
 axes[2].set_aspect('auto')
@@ -493,8 +493,8 @@ delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
 axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
 axes[0].scatter(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), c='lightskyblue', alpha=0.5)
 r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_dws.t().flatten())
-axes[0].set_ylim([-5, 5])
-axes[0].text(0.18, 4, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[0].set_ylim([-5, 5])
+# axes[0].text(0.18, 4, f'r={r_val:.3f}, p={p_val:.3f}')
 axes[0].set_xlabel('Causal Uncertainty Before Trial')
 axes[0].set_ylabel(r'$\log(\Delta dU)$')
 axes[0].set_aspect('auto')
@@ -502,16 +502,16 @@ axes[0].set_aspect('auto')
 axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
 axes[1].scatter(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), c='lightgreen', alpha=0.5)
 r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_dws.t().flatten())
-axes[1].text(0.16, 4, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[1].set_ylim([-5, 5])
+# axes[1].text(0.16, 4, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[1].set_ylim([-5, 5])
 axes[1].set_xlabel('Causal Uncertainty After Trial')
 axes[1].set_aspect('auto')
 
 axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_dws.t().flatten(), 1))(np.unique(delta_unc)), c='black')
 axes[2].scatter(delta_unc.flatten(), actual_dws.t().flatten(), c='lightcoral', alpha=0.5)
 r_val, p_val = spearmanr(delta_unc.flatten(), actual_dws.t().flatten())
-axes[2].text(-0.04, -2, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[2].set_ylim([-5, 5])
+# axes[2].text(-0.04, -2, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[2].set_ylim([-5, 5])
 axes[2].set_xlabel('Changes in Causal Uncertainty')
 axes[2].set_aspect('auto')
 

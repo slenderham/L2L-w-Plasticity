@@ -12,7 +12,7 @@ from IPython import display
 from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
-# from decomposition import *
+from decomposition import *
 # %matplotlib qt
 
 torch.manual_seed(0);
@@ -42,7 +42,7 @@ n_eachring = 32
 n_input, n_output = 1+num_ring*n_eachring, n_eachring+1
 hp = {
         # batch size for training
-        'batch_size_train': 64,
+        'batch_size_train': 1,
         # batch_size for testing
         'batch_size_test': 512,
         # input type: normal, multi
@@ -115,9 +115,10 @@ param_groups = add_weight_decay(model);
 
 optimizer = optim.AdamW(param_groups, lr=1e-3);
 
-train_epochs = 100000;
+train_epochs = 0000;
 val_every = 100;
 grad_every = 1; # do gradient accumulation to mediate effect of sampling one task at a time
+test_epochs = len(hp['rule_trains'])*4;
 
 cumReward = [];
 
@@ -213,4 +214,75 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
                     'cumReward': cumReward}, 
                     'model_multitask');
 
-# %%
+hs = [];
+dUs = [];
+task_type = [];
+seq_lens = [];
+
+for i in tqdm.tqdm(range(test_epochs), position=0, leave=True):
+    # initialize loss and reward
+    new_h, new_v, new_dU, new_trace = model.get_init_states(batch_size=hp['batch_size_train'], device=device);
+
+    rule_train_now = hp['rule_trains'][i%len(hp['rule_trains'])]
+    # Generate a random batch of trials.
+    # Each batch has the same trial length
+    total_input_support = [];
+    for _ in range(5):
+        support_trial = tasks.generate_trials(rule_train_now, hp, 'random',
+                batch_size=hp['batch_size_train'])
+
+        # support set for quick task adaptation
+        inputs_support = torch.from_numpy(support_trial.x)
+        targets_support = torch.from_numpy(support_trial.y)
+
+        inputs_support = torch.cat([inputs_support, torch.zeros(1, *inputs_support.shape[1:])], dim=0)
+        targets_support = torch.cat([torch.zeros(1, *targets_support.shape[1:]), targets_support], dim=0)
+
+        total_input_support.append(torch.cat([inputs_support, targets_support, \
+                                            torch.ones(*inputs_support.shape[:2], 1), \
+                                            torch.zeros(*inputs_support.shape[:2], 1)], dim=-1))
+
+    query_trial = tasks.generate_trials(rule_train_now, hp, 'random',
+            batch_size=hp['batch_size_train'])
+
+    inputs_query = torch.from_numpy(query_trial.x)
+    targets_query = torch.from_numpy(query_trial.y)
+    query_mask = torch.from_numpy(query_trial.c_mask)
+
+    total_input_query = torch.cat([inputs_query, torch.zeros_like(targets_query), \
+                                        torch.zeros(*inputs_query.shape[:2], 1), \
+                                        torch.ones(*inputs_query.shape[:2], 1)], dim=-1)
+
+    total_input = torch.cat([*total_input_support, total_input_query], dim=0)
+
+    new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, output, value), mod = model.train().forward(\
+                                                          x = total_input.to(device),\
+                                                          h = new_h, \
+                                                          v = new_v, \
+                                                          dU = new_dU, \
+                                                          trace = new_trace);
+
+    output = torch.exp(output)[-len(total_input_query):] # log sigmoid to sigmoid
+    
+    hs.append(last_layer_out)
+    dUs.append(last_layer_fws)
+    seq_lens.append(total_input.shape[0])
+    task_type.append(i%len(hp['rule_trains']))
+
+    fixation_mask = (torch.argmax(targets_query[-1], dim=-1)==0).float();
+        
+    angle_diffs = (torch.argmax(output[-1], dim=-1)-torch.argmax(targets_query[-1].to(device), dim=-1))*2*np.pi/n_eachring
+    rule_acc[rule_train_now][0] += \
+        ((1-fixation_mask)*(tasks.get_dist(angle_diffs.detach().cpu())<=0.2*np.pi).float() +\
+          fixation_mask*(output[-1,:,0]>0.5).float().cpu()).mean().item()
+    rule_acc[rule_train_now][1] += 1
+
+
+
+hs = torch.cat(hs).squeeze()
+dUs = torch.cat(dUs).squeeze()
+
+tags = [task_type[i] for i in range(test_epochs) for _ in range(seq_lens[i])]
+
+vis_pca(hs, tags, tags, data_type='vec')
+vis_pca(dUs, tags, tags, data_type='vec')
