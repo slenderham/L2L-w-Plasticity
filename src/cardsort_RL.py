@@ -6,11 +6,10 @@ from scipy.stats import ortho_group, ttest_rel
 import numpy as np
 from random import randint
 from matplotlib import pyplot as plt
-from lamb import Lamb
 from ppo import PPO, Memory
 import tqdm
 from decomposition import *
-%matplotlib qt
+# %matplotlib qt
 '''
     simpler WCST
     the episodes are predetermined, but whether the dimension to attend to changes from trial to trial
@@ -83,7 +82,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.6);
 
 n_epochs = 0;
-len_seq = 60;
+len_seq = 120;
 buffer_size = 50;
 num_samples = 5;
 
@@ -94,7 +93,7 @@ episode_buffer = Memory();
 cumReward = [];
 
 try:
-    state_dict = torch.load("model_WCST");
+    state_dict = torch.load("pretrained_models/model_WCST");
     model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
     cumReward = state_dict["cumReward"];
@@ -107,6 +106,8 @@ ppo = PPO(policy = model, \
           buffer_size = buffer_size,\
           gamma=0.1, lambd=0.1,\
          );
+
+# %% Model Training
 
 for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
     # initialize loss and reward
@@ -176,18 +177,18 @@ for i in tqdm.tqdm(range(n_epochs), position=0, leave=True):
         # scheduler1.step();
         torch.save({'model_state_dict': model.state_dict(), \
                     'optimizer_state_dict': optimizer.state_dict(), \
-                    'cumReward': cumReward}, 'model_WCST');
+                    'cumReward': cumReward}, 'pretrained_models/model_WCST');
 
 
-
-state_dict = torch.load("model_WCST");
+# %% Load Model and Freeze Weight Analysis
+state_dict = torch.load("pretrained_models/model_WCST");
 print(model.state_dict().keys())
 print(state_dict["model_state_dict"].keys())
 print(model.load_state_dict(state_dict["model_state_dict"]));
 # model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
 
 
-# freeze_fw_starts = list(range(0, len_seq, 5))+[10000]
+freeze_fw_starts = list(range(0, len_seq, 5))+[10000]
 freeze_fw_res = [];
 freeze_fw_starts = [10000]
 
@@ -280,29 +281,35 @@ t_res = []
 for i in range(len(freeze_fw_starts)-1):
     t_res.append(ttest_rel(freeze_fw_res[i], freeze_fw_res[i+1])[1])
 
-# plt.bar(range(len(freeze_fw_res)), freeze_fw_res.mean(1))
-# plt.errorbar(range(len(freeze_fw_res)), freeze_fw_res.mean(1), 1.96*freeze_fw_res.std(1)/num_samples**0.5, fmt='.')
-# for i in range(len(freeze_fw_starts)-1):
-#     y = freeze_fw_res.mean(1)[i:i+2].max()+0.05
-#     plt.plot([i+0.1, i+0.1, i+0.9, i+0.9], [y, y+0.005, y+0.005, y], lw=1.5, c='k')
-#     plt.text(i+0.25, y+0.01, sig2asterisk(t_res[i]))
-# plt.xlabel('Start of Weight Freezing')
-# plt.xticks(range(len(freeze_fw_res)), labels=list(freeze_fw_starts[:-1])+['No Freeze'])
-# plt.ylabel('Error Rate')
-# plt.title('Error Rate with Different Weight Freezing Times')
+# %% Plot Error Rate by Weight Freezing Time
 
-# print(np.mean(cumReward));
-# mean_rwd = np.mean(cumReward, axis=0);
-# std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
-# plt.plot(np.arange(len_seq), mean_rwd);
-# plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
-# # plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
-# # plt.imshow(cumReward)
-# plt.xlabel('Intra-Episode Timestep')
-# plt.ylabel('Episodes')
-# plt.ylabel('Error Rate')
-# plt.title('Errors in Episodes of WCST')
-# plt.show()
+plt.bar(range(len(freeze_fw_res)), freeze_fw_res.mean(1))
+plt.errorbar(range(len(freeze_fw_res)), freeze_fw_res.mean(1), 1.96*freeze_fw_res.std(1)/num_samples**0.5, fmt='.')
+for i in range(len(freeze_fw_starts)-1):
+    y = freeze_fw_res.mean(1)[i:i+2].max()+0.05
+    plt.plot([i+0.1, i+0.1, i+0.9, i+0.9], [y, y+0.005, y+0.005, y], lw=1.5, c='k')
+    plt.text(i+0.25, y+0.01, sig2asterisk(t_res[i]))
+plt.xlabel('Start of Weight Freezing')
+plt.xticks(range(len(freeze_fw_res)), labels=list(freeze_fw_starts[:-1])+['No Freeze'])
+plt.ylabel('Error Rate')
+plt.title('Error Rate with Different Weight Freezing Times')
+
+# %% Plot Intra-episode Reward by Timestep
+
+print(np.mean(cumReward));
+mean_rwd = np.mean(cumReward, axis=0);
+std_rwd = np.std(cumReward, axis=0)/num_samples**0.5;
+plt.plot(np.arange(len_seq), mean_rwd);
+plt.fill_between(np.arange(len_seq), mean_rwd-std_rwd, mean_rwd+std_rwd, alpha=0.2)
+# plt.vlines(freeze_fw_start, ymin=-0.05, ymax=(mean_rwd+std_rwd).max()+0.05, linestyles='dashed', alpha=0.5)
+# plt.imshow(cumReward)
+plt.xlabel('Intra-Episode Timestep')
+plt.ylabel('Episodes')
+plt.ylabel('Error Rate')
+plt.title('Errors in Episodes of WCST')
+plt.show()
+
+# %% Collect Network Activities
 
 inputs = torch.stack([torch.cat(i, dim=0) for i in inputs], dim=0).transpose(0, 1)
 hs = torch.stack([torch.cat(h, dim=0) for h in hs], dim=0).transpose(0, 1) # from batch first to timestep first
@@ -314,19 +321,21 @@ actions = torch.as_tensor(actions).long().transpose(0, 1)
 mod_ms = torch.FloatTensor(mod_ms)
 mod_ss = torch.FloatTensor(mod_ss)
 mod_rs = torch.FloatTensor(mod_rs)
-vis_parafac(hs.reshape((len_seq//15, (chunks+2)*15, *hs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_vec')
-vis_parafac(dUs.reshape((len_seq//15, (chunks+2)*15, *dUs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_mat')
+# vis_parafac(hs.reshape((len_seq//15, (chunks+2)*15, *hs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_vec')
+# vis_parafac(dUs.reshape((len_seq//15, (chunks+2)*15, *dUs.shape[1:])).transpose(0, 1).flatten(1, 2).detach().numpy(), rank=4, plot_type='omni_mat')
 # plt.plot(forbenius_norm(dUs.numpy(), 1))
+
+# %% Plot LDA by subsequence action (Not shown in paper) and by Task
 
 # axe = vis_lda(hs.flatten(0,1), actions.flatten());
 # axe.set_title("LDA of Cell State")
 # axe = vis_lda(dUs.flatten(2,3).flatten(0,1), actions.flatten());
 # axe.set_title("LDA of Fast Weight")
 
-# axe = vis_lda(hs.detach(), dims.flatten());
-# axe.set_title("LDA of Cell State")
-# axe = vis_lda(dUs.flatten(2,3).detach(), dims.flatten());
-# axe.set_title("LDA of Fast Weight")
+axe = vis_lda(hs.detach().flatten(0, 1), dims.flatten().numpy());
+axe.set_title("LDA of Cell State")
+axe = vis_lda(dUs.flatten(2,3).detach().flatten(0, 1), dims.flatten().numpy());
+axe.set_title("LDA of Fast Weight")
 
 sens = []
 
@@ -343,40 +352,44 @@ sens = []
 
 
 
-
 # axe = vis_pca(hs, tags=actions.numpy(), labels=[f"Choice {i}" for i in range(val)]);
 # axe.set_title("PCA of Cell State")
 # axe = vis_pca(dUs.flatten(2,3), tags=actions.numpy(), labels=[f"Choice {i}" for i in range(val)]);
 # axe.set_title("PCA of Fast Weight")
-# axe = vis_pca(hs, tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)]);
-# axe.set_title("PCA of Cell State")
-# axe = vis_pca(dUs.flatten(2,3), tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)]);
-# axe.set_title("PCA of Fast Weight")
 
-# mean_scores = [];
-# std_scores = [];
+# %% Plot PCA (TCA for fast weight)
 
-# for t in range(75):
-#     print(t)
-#     scores_hs_ans = svc_cv(hs[t::75].flatten(0,1), actions[t::75].flatten())
-#     scores_dUs_ans = svc_cv(dUs.flatten(2,3)[t::75].flatten(0,1), actions[t::75].flatten())
-#     scores_hs_task = svc_cv(hs[t::75].flatten(0,1), dims[t::75].flatten())
-#     scores_dUs_task = svc_cv(dUs.flatten(2,3)[t::75].flatten(0,1), dims[t::75].flatten())
-#     mean_scores.append([scores_hs_ans.mean(), scores_dUs_ans.mean(), scores_hs_task.mean(), scores_dUs_task.mean()])
-#     std_scores.append([1.96*scores_hs_ans.std(), 1.96*scores_dUs_ans.std(), 1.96*scores_hs_task.std(), 1.96*scores_dUs_task.std()])
+axe = vis_pca(hs, tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)], threeD=True, data_type='vec');
+axe.set_title("PCA of Cell State")
+axe = vis_pca(dUs, tags=dims.numpy(), labels=[f"Task {i}" for i in range(chunks)], threeD=True, data_type='mat');
+axe.set_title("PCA of Fast Weight")
 
-# mean_scores = np.array(mean_scores)
-# std_scores = np.array(std_scores)
+# %% Decoding Analysis
 
-# labels = ['v X A', 'dU X A', 'v X T', 'dU X T']
-# fig, ax = plt.subplots()
-# for i in range(4):
-#     eb = plt.errorbar(x=range(75), \
-#         y=mean_scores[:,i], \
-#         yerr=std_scores[:,i], label=labels[i]);
-# plt.ylim(0.0, 1.2)
-# plt.xlabel('Timestep')
-# plt.ylabel('Accuracy')
-# fig.legend(prop={'size': 9})
-# fig.suptitle('Cross Validation Decoding Accuracy')
-# fig.show()
+mean_scores = [];
+std_scores = [];
+
+for t in range(75):
+    print(t)
+    scores_hs_ans = svc_cv(hs[t::75].flatten(0,1), actions[t::75].flatten())
+    scores_dUs_ans = svc_cv(dUs.flatten(2,3)[t::75].flatten(0,1), actions[t::75].flatten())
+    scores_hs_task = svc_cv(hs[t::75].flatten(0,1), dims[t::75].flatten())
+    scores_dUs_task = svc_cv(dUs.flatten(2,3)[t::75].flatten(0,1), dims[t::75].flatten())
+    mean_scores.append([scores_hs_ans.mean(), scores_dUs_ans.mean(), scores_hs_task.mean(), scores_dUs_task.mean()])
+    std_scores.append([1.96*scores_hs_ans.std(), 1.96*scores_dUs_ans.std(), 1.96*scores_hs_task.std(), 1.96*scores_dUs_task.std()])
+
+mean_scores = np.array(mean_scores)
+std_scores = np.array(std_scores)
+
+labels = ['v X A', 'dU X A', 'v X T', 'dU X T']
+fig, ax = plt.subplots()
+for i in range(4):
+    eb = plt.errorbar(x=range(75), \
+        y=mean_scores[:,i], \
+        yerr=std_scores[:,i], label=labels[i]);
+plt.ylim(0.0, 1.2)
+plt.xlabel('Timestep')
+plt.ylabel('Accuracy')
+fig.legend(prop={'size': 9})
+fig.suptitle('Cross Validation Decoding Accuracy')
+fig.show()

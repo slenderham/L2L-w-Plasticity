@@ -13,7 +13,7 @@ from fitQ import loglikelihood, fitQ
 from scipy import stats
 from tabulate import tabulate
 from decomposition import *
-%matplotlib qt
+# %matplotlib qt
 
 torch.manual_seed(0);
 np.random.seed(0);
@@ -53,7 +53,7 @@ optimizer = optim.AdamW(param_groups, lr=1e-3);
 # scheduler1 = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5);
 
 train_epochs = 0;
-val_epochs = 10;
+val_epochs = 50;
 buffer_size = 50;
 max_steps = 600;
 
@@ -65,15 +65,15 @@ maze = TMaze(height = 4,
              max_steps = max_steps,
              switch_after = 15);
 
-# try:
-state_dict = torch.load("model_maze", map_location=device);
-model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
-optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
-cumReward = state_dict["cumReward"];
-# model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
-print("model loaded successfully")
-# except:
-    # print("model failed to load");
+try:
+    state_dict = torch.load("pretrained_models/model_maze", map_location=device);
+    model.load_state_dict(state_dict["model_state_dict"]);#print(model.state_dict());
+    optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
+    cumReward = state_dict["cumReward"];
+    # model.rnns[0].alpha = torch.nn.Parameter(-torch.ones(1)*1e6)
+    print("model loaded successfully")
+except:
+    print("model failed to load");
 
 ppo = PPO(policy = model, \
           optimizer = optimizer, \
@@ -87,6 +87,8 @@ ppo = PPO(policy = model, \
 
 print(model);
 print(optimizer);
+
+# %% Train Model
 
 for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
     # initialize loss and reward
@@ -141,7 +143,9 @@ for i in tqdm.tqdm(range(train_epochs), position=0, leave=True):
         torch.save({'model_state_dict': model.state_dict(), 
                     'optimizer_state_dict': optimizer.state_dict(), 
                     'cumReward': cumReward}, 
-                    'model_maze');
+                    'pretrained_models/model_maze');
+
+# %% Evaluate Model: Test and Model Fitting
 
 def evaluate():
 
@@ -166,7 +170,7 @@ def evaluate():
                                         (torch.as_tensor(obs, dtype=torch.float).flatten().unsqueeze(0).to(device), action.to(device), torch.as_tensor(reward).reshape(1,1).to(device)), dim=1
                                     ).unsqueeze(0);
                 # one iter of network, notice that the reward is from the previous time step
-                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m, mod_r, mod_o) = model.eval().forward(\
+                new_v, new_h, new_dU, new_trace, (last_layer_out, last_layer_fws, log_probs, value), (mod, mod_e, mod_m, mod_r) = model.eval().forward(\
                                                             x = total_input.to(device),\
                                                             h = new_h, \
                                                             v = new_v, \
@@ -200,6 +204,8 @@ print(abe, nll)
 ep_rwds = [np.mean(rewards[i]) for i in range(val_epochs)]
 print(np.mean(ep_rwds), np.std(ep_rwds)*1.96/np.sqrt(val_epochs))
 
+# %% Collect Network Activities
+
 mods = [[j[2].squeeze().detach().numpy() for j in t] for t in states]
 vs = [[j[0].squeeze().detach().numpy() for j in t] for t in states]
 dUs = [[j[1].squeeze().detach().numpy() for j in t] for t in states]
@@ -207,17 +213,20 @@ mod_ss = [[j[3].squeeze().detach().numpy().reshape(1) for j in t] for t in state
 mod_ms = [[j[4].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 mod_rs = [[j[5].squeeze().detach().numpy().reshape(1) for j in t] for t in states]
 
+# %% Get behavioral variables from model fit
+
 feats = trajectory.get_feats(Qls, Qrs, abe, mod_ms);
 results, dictvec, feats_flat, acts_flat = trajectory.linear_regression_fit(feats, mod_ms);
 
+# %% Plot PCA (TCA for fast weight) for visualization
 axe = vis_pca(torch.tensor(vs), data_type='vec', \
     tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), \
-    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return'], threeD=True);
 axe.set_title("PCA of Cell State")
 plt.show()
 axe = vis_pca(torch.tensor(dUs), data_type='mat', \
     tags=2*np.array(trajectory.get_task())+np.array(trajectory.get_stage()), \
-    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return']);
+    labels=['Left+Approach','Left+Return','Right+Approach','Right+Return'], threeD=True);
 axe.set_title("PCA of Fast Weight")
 plt.show()
 
@@ -280,12 +289,15 @@ for v in vars_to_plot:
 # print(tabulate(results_to_print, headers=headers, tablefmt="github"))
 fig.show()
 
+# %% Plot example of Q-value trajectories
+
 # ax_q = plt.subplot()
 # ax_q.plot(Qls[0], label=r'$Q_l$')
 # ax_q.plot(Qrs[0], label=r'$Q_r$')
 # ax_q.set_xlabel('Trial number')
 # ax_q.set_ylabel('Value function')
 # ax_q.legend()
+
 
 # for k in results.keys():
 #     print(k)
@@ -312,3 +324,35 @@ fig.show()
 #         print(stats.pearsonr(h2modweight[sig_q_coeff_pos], q_coeffs));
 #     except:
 #         None
+
+# %% Calculate correlation at each location
+fig, axes = plt.subplots(2)
+
+corrs = [];
+for l in locs:
+    corrs.append(stats.spearmanr(feats_flat[l]['rpe'], acts_flat[l]))
+b = axes[0].bar(range(len(corrs)), np.array(corrs)[:,0], color='salmon', label='RPE')
+axes[0].legend()
+for i in range(len(corrs)):
+    if np.array(corrs)[i,1]<0.05:
+        axes[0].plot(i, corrs[i][0]+0.01, '*', color='red')
+axes[0].set_xticks(range(len(locs)))
+axes[0].set_xticklabels([])
+axes[0].set_ylim([-0.05, 0.25])
+axes[0].set_title('')
+axes[0].set_ylabel('Spearman\'s R')
+
+corrs = [];
+for l in locs:
+    corrs.append(stats.spearmanr(feats_flat[l]['qdiff'], acts_flat[l]))
+b = axes[1].bar(range(len(corrs)), np.array(corrs)[:,0], color='bisque',label=r"$Q_{diff}$")
+axes[1].legend()
+for i in range(len(corrs)):
+    if np.array(corrs)[i,1]<0.05:
+        axes[1].plot(i, corrs[i][0]+np.sign(corrs[i][0])*0.05, '*', color='orange')
+axes[1].set_xticks(range(len(locs)))
+axes[1].set_xticklabels(tick_labels)
+axes[1].set_ylim([-1.0, 1.0])
+axes[1].set_ylabel('Spearman\'s R')
+axes[1].set_xlabel('Location')
+# %%

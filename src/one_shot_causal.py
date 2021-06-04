@@ -7,15 +7,13 @@ import numpy as np
 from random import randint
 from ppo import PPO, Memory
 from matplotlib import pyplot as plt
-from lamb import Lamb, get_cosine_schedule_with_warmup
 from tqdm import tqdm
 from PIL import Image
-from lamb import Lamb
 import pickle
 # from decomposition import *
 from fitQ import fitCausal
 from scipy.stats import spearmanr, pearsonr
-%matplotlib qt
+# %matplotlib qt
 
 from torchmeta.datasets import Omniglot
 from torchmeta.transforms import Categorical, ClassSplitter, Rotation
@@ -174,7 +172,7 @@ img_size = 28;
 train_batches = 0000;
 val_batches = 25;
 val_every = 25;
-test_batches = 10;
+test_batches = 100;
 assert(val_every%len_seq==0)
 task_type_name = ["Novel Image -> Novel Outcome", "Novel Image -> Nonnovel Outcome"]
 
@@ -234,7 +232,7 @@ optimizer = optim.AdamW(param_groups, lr=lr, eps=1e-4);
 scheduler1 = optim.lr_scheduler.StepLR(optimizer, 6000, 0.1)
 cumReward = []
 try:
-    state_dict = torch.load("model_one_shot-99", map_location=device);
+    state_dict = torch.load("pretrained_models/model_one_shot", map_location=device);
     print(model.load_state_dict(state_dict["model_state_dict"]));
     optimizer.load_state_dict(state_dict["optimizer_state_dict"]);
     scheduler1.load_state_dict(state_dict["scheduler_state_dict"]);
@@ -284,15 +282,16 @@ for idx, batch in tqdm(train_iter, position=0):
         action_idx = m.sample();
 
         # get reward
-        got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
-        # got_novel_trial = (torch.ones(batch_size)>0.5).to(device)
+        # got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
+        got_novel_trial = (torch.ones(batch_size)>0.5).to(device)
+        got_novel_outcome = (torch.rand(batch_size)<0.2).to(device).float()
         chose_novel = got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)
         # novel stim to novel outcome -> choose novel then novel outcome, didn't choose novel then nonnovel outcome
         # novel stim to nonnovel outcome -> choose novel then nonnovel outcome, didn't choose novel then novel outcome
         reward = (1-task_types)*(chose_novel).float()*novel_outcome\
-                +(1-task_types)*(~chose_novel).float()*(-novel_outcome)\
+                +(1-task_types)*(~chose_novel).float()*((2*got_novel_outcome-1)*novel_outcome)\
                 +(task_types)*(chose_novel).float()*(-novel_outcome)\
-                +(task_types)*(~chose_novel).float()*(novel_outcome);
+                +(task_types)*(~chose_novel).float()*((2*got_novel_outcome-1)*novel_outcome);
 
         episode_buffer.actions.append(action_idx); # time_step, batch size, 1
         episode_buffer.states.append(input_total); # trial number, within trial time step, batch_size, 1, input_dim
@@ -325,13 +324,14 @@ for idx, batch in tqdm(train_iter, position=0):
                 action_idx = m.sample();
 
                 # get reward
-                got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
-                # got_novel_trial = (torch.ones(batch_size)>0.5).to(device)
+                # got_novel_trial = (torch.rand(batch_size)>0.4).to(device);
+                got_novel_trial = (torch.ones(batch_size)>0.5).to(device)
+                got_novel_outcome = (torch.rand(batch_size)<0.2).to(device).float()
                 chose_novel = got_novel_trial & (action_idx==bonus_round_novel_outcome_idx)
                 reward = (1-task_types)*(chose_novel).float()*novel_outcome\
-                        +(1-task_types)*(~chose_novel).float()*(-novel_outcome)\
+                        +(1-task_types)*(~chose_novel).float()*((2*got_novel_outcome-1)*novel_outcome)\
                         +(task_types)*(chose_novel).float()*(-novel_outcome)\
-                        +(task_types)*(~chose_novel).float()*(novel_outcome);
+                        +(task_types)*(~chose_novel).float()*((2*got_novel_outcome-1)*novel_outcome);
                 valReward += reward.mean()/val_batches;
                 if ((jdx+1)%val_batches==0):
                     print(valReward)
@@ -339,12 +339,14 @@ for idx, batch in tqdm(train_iter, position=0):
                     torch.save({'model_state_dict': model.state_dict(), \
                                 'optimizer_state_dict': optimizer.state_dict(), \
                                 'scheduler_state_dict': scheduler1.state_dict(), \
-                                'cumReward': cumReward}, 'model_one_shot');
+                                'cumReward': cumReward}, 'pretrained_models/model_one_shot');
                     break;
 
     if (idx+1)%train_batches==0:
         print('training complete, proceeding to test')
         break;
+
+# %% Evaluate and Record Network Activities and Task Variables
 
 all_task_types = [];
 all_novel_outcomes = [];
@@ -359,7 +361,7 @@ dUs = [];
 ms = [];
 ss = [];
 rs = [];
-os = [];
+# gs = [];
 ratings = [];
 testCorrects = [];
 
@@ -411,7 +413,7 @@ with torch.no_grad():
         ms.append(mod[2])
         ss.append(mod[1])
         rs.append(mod[3])
-        os.append(mod[4])
+        # gs.append(mod[4])
 
         if (jdx+1)%test_batches==0:
             print(testReward)
@@ -426,8 +428,8 @@ all_novel_outcomes = torch.cat(all_novel_outcomes, dim=0)
 all_actions = torch.cat(all_actions, dim=0)
 all_stim_orders = torch.cat(all_stim_orders, dim=0)
 ratings = (torch.cat(ratings, dim=0)/10).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
-causal_ratings = (all_novel_outcomes<0).float().unsqueeze(-1)*ratings \
-               + (all_novel_outcomes>0).float().unsqueeze(-1)*(1-ratings)/2
+causal_ratings = (all_novel_outcomes>0).float().unsqueeze(-1)*ratings \
+               + (all_novel_outcomes<0).float().unsqueeze(-1)*(1-ratings)/2
 all_bonus_round_novel_outcome_idx = torch.cat(all_bonus_round_novel_outcome_idx, dim=0) 
 all_outcomes = torch.cat(all_outcomes, dim=0)
 all_bonus_round_stim_orders = torch.cat(all_bonus_round_stim_orders, dim=0)
@@ -437,11 +439,10 @@ dUs = torch.cat(dUs, dim=1)
 ms = torch.cat(ms, dim=1)
 ss = torch.cat(ss, dim=1)
 rs = torch.cat(rs, dim=1)
-os = torch.cat(os, dim=1)
+# gs = torch.cat(gs, dim=1)
 
-# deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes, ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
-# deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, all_outcomes==all_novel_outcomes.unsqueeze(-1), causal_ratings, all_bonus_round_stim_orders, prior=[1, 1, 1]);
-deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, -2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))+1, causal_ratings, all_bonus_round_stim_orders);
+# %% Fit Model and calculate causal strengths and uncertainties
+deltasgammatau, lrs, all_alphas, mse = fitCausal(all_stim_orders, 2*(all_outcomes==all_novel_outcomes.unsqueeze(-1))-1, causal_ratings, all_bonus_round_stim_orders);
 
 sum_alphas = all_alphas.sum(-1, keepdims=True)
 all_means = all_alphas/sum_alphas
@@ -451,34 +452,34 @@ causal_unc = all_vars.sum(-1)
 actual_lrs = torch.split(ms.squeeze(), [(num_pics_per_trial+1)*num_repeats]*num_trials+[num_pics*num_repeats]+[num_repeats], dim=0)
 actual_lrs = model.rnns[0].tau_U.sigmoid().detach()*torch.stack(actual_lrs[:num_trials])[:,-num_repeats:].mean(1); # -> num_trials X batch size
 # actual_lrs = (actual_lrs-actual_lrs.mean())/(actual_lrs.std()+1e-6)
-fig, axes = plt.subplots(1, 3)
-delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
-axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
-axes[0].scatter(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), c='lightskyblue', alpha=0.5)
-r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten())
-# axes[0].set_ylim([-1, 10])
-# axes[0].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[0].set_xlabel('Causal Uncertainty Before Trial')
-axes[0].set_ylabel('Modulation Signal')
-axes[0].set_aspect('auto')
+# fig, axes = plt.subplots(1, 3)
+# delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
+# axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
+# axes[0].scatter(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten(), c='lightskyblue', alpha=0.5)
+# r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_lrs.t().flatten())
+# # axes[0].set_ylim([-1, 10])
+# # axes[0].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[0].set_xlabel('Causal Uncertainty Before Trial')
+# axes[0].set_ylabel('Modulation Signal')
+# axes[0].set_aspect('auto')
 
-axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
-axes[1].scatter(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), c='lightgreen', alpha=0.5)
-r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten())
-# axes[1].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
-# axes[1].set_ylim([-1, 10])
-axes[1].set_xlabel('Causal Uncertainty After Trial')
-axes[1].set_ylabel('Modulation Signal')
-axes[1].set_aspect('auto')
+# axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
+# axes[1].scatter(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten(), c='lightgreen', alpha=0.5)
+# r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_lrs.t().flatten())
+# # axes[1].text(0.22, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# # axes[1].set_ylim([-1, 10])
+# axes[1].set_xlabel('Causal Uncertainty After Trial')
+# axes[1].set_ylabel('Modulation Signal')
+# axes[1].set_aspect('auto')
 
-axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_lrs.t().flatten(), 1))(np.unique(delta_unc)), c='black')
-axes[2].scatter(delta_unc.flatten(), actual_lrs.t().flatten(), c='lightcoral', alpha=0.5)
-r_val, p_val = spearmanr(delta_unc.flatten(), actual_lrs.t().flatten())
-# axes[2].text(0.0, 0, f'r={r_val:.3f}, p={p_val:.3f}')
-# axes[2].set_ylim([-1, 10])
-axes[2].set_xlabel('Changes in Causal Uncertainty')
-axes[2].set_ylabel('Modulation Signal')
-axes[2].set_aspect('auto')
+# axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_lrs.t().flatten(), 1))(np.unique(delta_unc)), c='black')
+# axes[2].scatter(delta_unc.flatten(), actual_lrs.t().flatten(), c='lightcoral', alpha=0.5)
+# r_val, p_val = spearmanr(delta_unc.flatten(), actual_lrs.t().flatten())
+# # axes[2].text(0.0, 0, f'r={r_val:.3f}, p={p_val:.3f}')
+# # axes[2].set_ylim([-1, 10])
+# axes[2].set_xlabel('Changes in Causal Uncertainty')
+# axes[2].set_ylabel('Modulation Signal')
+# axes[2].set_aspect('auto')
 
 dws = (dUs[1:]-dUs[:-1]).pow(2).mean([2,3])
 # plt.plot(dws)
@@ -488,32 +489,32 @@ actual_dws = torch.split(dws.squeeze(), [(num_pics_per_trial+1)*num_repeats]*num
 actual_dws = torch.stack(actual_dws[:num_trials])[:,-num_repeats:].mean(1); # -> num_trials X batch size
 actual_dws = actual_dws.log()
 
-fig, axes = plt.subplots(1, 3)
-delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
-axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
-axes[0].scatter(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), c='lightskyblue', alpha=0.5)
-r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_dws.t().flatten())
-# axes[0].set_ylim([-5, 5])
-# axes[0].text(0.18, 4, f'r={r_val:.3f}, p={p_val:.3f}')
-axes[0].set_xlabel('Causal Uncertainty Before Trial')
-axes[0].set_ylabel(r'$\log(\Delta dU)$')
-axes[0].set_aspect('auto')
+# fig, axes = plt.subplots(1, 3)
+# delta_unc = causal_unc[:, 1:]-causal_unc[:, :-1]
+# axes[0].plot(np.unique(causal_unc[:, :-1].flatten()), np.poly1d(np.polyfit(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, :-1])), c='black')
+# axes[0].scatter(causal_unc[:, :-1].flatten(), actual_dws.t().flatten(), c='lightskyblue', alpha=0.5)
+# r_val, p_val = spearmanr(causal_unc[:, :-1].flatten(), actual_dws.t().flatten())
+# # axes[0].set_ylim([-5, 5])
+# # axes[0].text(0.18, 4, f'r={r_val:.3f}, p={p_val:.3f}')
+# axes[0].set_xlabel('Causal Uncertainty Before Trial')
+# axes[0].set_ylabel(r'$\log(\Delta dU)$')
+# axes[0].set_aspect('auto')
 
-axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
-axes[1].scatter(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), c='lightgreen', alpha=0.5)
-r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_dws.t().flatten())
-# axes[1].text(0.16, 4, f'r={r_val:.3f}, p={p_val:.3f}')
-# axes[1].set_ylim([-5, 5])
-axes[1].set_xlabel('Causal Uncertainty After Trial')
-axes[1].set_aspect('auto')
+# axes[1].plot(np.unique(causal_unc[:, 1:].flatten()), np.poly1d(np.polyfit(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), 1))(np.unique(causal_unc[:, 1:])), c='black')
+# axes[1].scatter(causal_unc[:, 1:].flatten(), actual_dws.t().flatten(), c='lightgreen', alpha=0.5)
+# r_val, p_val = spearmanr(causal_unc[:, 1:].flatten(), actual_dws.t().flatten())
+# # axes[1].text(0.16, 4, f'r={r_val:.3f}, p={p_val:.3f}')
+# # axes[1].set_ylim([-5, 5])
+# axes[1].set_xlabel('Causal Uncertainty After Trial')
+# axes[1].set_aspect('auto')
 
-axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_dws.t().flatten(), 1))(np.unique(delta_unc)), c='black')
-axes[2].scatter(delta_unc.flatten(), actual_dws.t().flatten(), c='lightcoral', alpha=0.5)
-r_val, p_val = spearmanr(delta_unc.flatten(), actual_dws.t().flatten())
-# axes[2].text(-0.04, -2, f'r={r_val:.3f}, p={p_val:.3f}')
-# axes[2].set_ylim([-5, 5])
-axes[2].set_xlabel('Changes in Causal Uncertainty')
-axes[2].set_aspect('auto')
+# axes[2].plot(np.unique(delta_unc.flatten()), np.poly1d(np.polyfit(delta_unc.flatten(), actual_dws.t().flatten(), 1))(np.unique(delta_unc)), c='black')
+# axes[2].scatter(delta_unc.flatten(), actual_dws.t().flatten(), c='lightcoral', alpha=0.5)
+# r_val, p_val = spearmanr(delta_unc.flatten(), actual_dws.t().flatten())
+# # axes[2].text(-0.04, -2, f'r={r_val:.3f}, p={p_val:.3f}')
+# # axes[2].set_ylim([-5, 5])
+# axes[2].set_xlabel('Changes in Causal Uncertainty')
+# axes[2].set_aspect('auto')
 
 # plt.plot(ms.squeeze())
 # plt.show()
@@ -532,10 +533,124 @@ axes[2].set_aspect('auto')
 #     ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"], incremental=True);
 # axes.set_title("PCA of Fast Weight")
 
+# %% Plot 
+fig, axes = plt.subplots(2,2)
+
+titles = [['Novel Img->Positive Novel Rwd', 'Novel Img->Negative Novel Rwd'],
+          ['Novel Img->Negative NonNovel Rwd', 'Novel Img->Positive NonNovel Rwd']];
+
+for i in range(2):
+    for j in range(2):
+        p1, =axes[i, j].plot(dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1))
+        p2, =axes[i, j].plot(dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1))
+        axes[i, j].fill_between(range(len(dws)), 
+        dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1)-dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].std(1),\
+        dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1)+dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].std(1), alpha=0.2)
+        axes[i, j].fill_between(range(len(dws)), 
+        dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1)-dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].std(1),\
+        dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1)+dws[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].std(1), alpha=0.2)
+        if i==0 and j==0:
+            fig.legend([p1, p2], ['Novel Stim at Trial 4', 'Novel Stim at Trial 5'], loc='upper center')
+        axes[i, j].set_title(titles[i][j])
+plt.setp(axes,  ylim=[-0.5, 6])
+fig.text(0.5, 0.04, 'Time-step', ha='center')
+fig.text(0.04, 0.5, r'$\Delta w$', va='center', rotation='vertical')
+
+# %%
+fig, axes = plt.subplots(2,2)
+p1, =axes[0, 0].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0))
+p2, =axes[0, 0].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0))
+axes[0, 0].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0)-causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].std(0),\
+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0)+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].std(0), alpha=0.2)
+axes[0, 0].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0)-causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].std(0),\
+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0)+causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].std(0), alpha=0.2)
+fig.legend([p1, p2], ['Novel Stim at Trial 4', 'Novel Stim at Trial 5'], loc='upper center')
+axes[0, 0].set_title('Novel Img->Positive Novel Rwd')
+
+axes[0, 1].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0))
+axes[0, 1].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0))
+axes[0, 1].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0)-causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].std(0),\
+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0)+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].std(0), alpha=0.2)
+axes[0, 1].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0)-causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].std(0),\
+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0)+causal_unc[(all_task_types==0) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].std(0), alpha=0.2)
+axes[0, 1].set_title('Novel Img->Negative Novel Rwd')
+
+axes[1, 0].plot(causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0))
+axes[1, 0].plot(causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0))
+axes[1, 0].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0)-causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].std(0),\
+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0)+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].std(0), alpha=0.2)
+axes[1, 0].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0)-causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].std(0),\
+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0)+causal_unc[(all_task_types==1) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].std(0), alpha=0.2)
+axes[1, 0].set_title('Novel Img->Negative NonNovel Rwd')
+
+axes[1, 1].plot(causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0))
+axes[1, 1].plot(causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0))
+axes[1, 1].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0)-causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].std(0),\
+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].mean(0)+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==3)].std(0), alpha=0.2)
+axes[1, 1].fill_between(range(causal_unc.shape[1]), 
+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0)-causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].std(0),\
+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].mean(0)+causal_unc[(all_task_types==1) & (all_novel_outcomes==-1) & (all_novel_stim_loc==4)].std(0), alpha=0.2)
+axes[1, 1].set_title('Novel Img->Positive NonNovel Rwd')
+
+fig.text(0.5, 0.04, 'Trial', ha='center', fontsize=12)
+fig.text(0.04, 0.5, r'Uncertainty', va='center', rotation='vertical', fontsize=12)
+
+# %%
+fig, axes = plt.subplots(2,2)
+
+titles = [['Novel Img->Positive Novel Rwd', 'Novel Img->Negative Novel Rwd'],
+          ['Novel Img->Negative NonNovel Rwd', 'Novel Img->Positive NonNovel Rwd']];
+
+ms = (torch.sigmoid(model.rnns[0].tau_U)*ms).detach().numpy();
+
+for i in range(2):
+    for j in range(2):
+        p1, =axes[i, j].plot(ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1).squeeze())
+        p2, =axes[i, j].plot(ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1).squeeze())
+        axes[i, j].fill_between(range(len(ms)), 
+        ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1).squeeze()-ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].std(1).squeeze(),\
+        ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].mean(1).squeeze()+ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==3)].std(1).squeeze(), alpha=0.2)
+        axes[i, j].fill_between(range(len(ms)), 
+        ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1).squeeze()-ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].std(1).squeeze(),\
+        ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].mean(1).squeeze()+ms[:,(all_task_types==i) & (all_novel_outcomes==(1-2*j)) & (all_novel_stim_loc==4)].std(1).squeeze(), alpha=0.2)
+        if i==0 and j==0:
+            fig.legend([p1, p2], ['Novel Stim at Trial 4', 'Novel Stim at Trial 5'], loc='upper center')
+        axes[i, j].set_title(titles[i][j])
+fig.text(0.5, 0.04, 'Time-step', ha='center', fontsize=12)
+fig.text(0.04, 0.5, 'Modulation Signal', va='center', rotation='vertical', fontsize=12)
+
+# %%
+
+fig, axes = plt.subplots(2,2)
+for i in range(2):
+    for j in range(2):
+        print(i, j)
+        axes[i, j].scatter(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_dws.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:].flatten())
+        axes[i, j].plot(np.unique(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten()), np.poly1d(np.polyfit(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_dws.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:].flatten(), 1))(np.unique(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1])), c='black')
+        axes[i, j].set_title(titles[i][j])
+        print(spearmanr(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_dws.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:].flatten()))
+fig.text(0.5, 0.04, 'Causal Uncertainty', ha='center', fontsize=12)
+fig.text(0.04, 0.5, r'$\Delta w$', va='center', rotation='vertical', fontsize=12)
+fig.tight_layout()
 # %%
 
 # %%
 
-# %%
-
+fig, axes = plt.subplots(2,2)
+for i in range(2):
+    for j in range(2):
+        print(i, j)
+        axes[i, j].scatter(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_lrs.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)),3:].flatten())
+        axes[i, j].plot(np.unique(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten()), np.poly1d(np.polyfit(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_lrs.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:].flatten(), 1))(np.unique(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1])), c='black')
+        axes[i, j].set_title(titles[i][j])
+        print(spearmanr(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_lrs.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)),3:].flatten()))
+fig.text(0.5, 0.04, 'Causal Uncertainty', ha='center', fontsize=12)
+fig.text(0.04, 0.5, r'$\tau_U m_t$', va='center', rotation='vertical', fontsize=12)
 # %%

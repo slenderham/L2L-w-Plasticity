@@ -356,9 +356,9 @@ class Trajectories:
             for i in range(len(goal_times[t])-1):
                 for j in range(goal_times[t][i], goal_times[t][i+1]):
                     feats[self.maze.mirror_positions[pos[t][j]]].append({
-                        "art-1": acts[t][j-1],
-                        "art-2": acts[t][j-2],
-                        "art-3": acts[t][j-3],
+                        # "art-1": acts[t][j-1],
+                        # "art-2": acts[t][j-2],
+                        # "art-3": acts[t][j-3],
                         "prev_choice": 1.0 if choices[t][i]=="left" else 0.0,
                         "task_type": tasks[t][i],
                         "rpe": outcomes[t][i]-(Qls[t][i] if choices[t][i]=="left" else Qrs[t][i]),
@@ -389,7 +389,7 @@ class Trajectories:
         acts_flat = {};
         for k, v in activities_by_pos.items():
             acts_flat[k] = np.array(v);
-            acts_flat[k] = (acts_flat[k]-acts_flat[k].mean(axis=0))/(acts_flat[k].std(axis=0)+1e-6)
+            # acts_flat[k] = (acts_flat[k]-acts_flat[k].mean(axis=0))/(acts_flat[k].std(axis=0)+1e-6)
 
         all_feats = [entry for f in feats.copy().values() for entry in f];
 
@@ -401,7 +401,7 @@ class Trajectories:
         feats_flat = {};
         for k, v in feats.items():
             feats_flat[k] = feat_fit.transform(v);
-            feats_flat[k] = (feats_flat[k]-feats_flat[k].mean(axis=0))/(feats_flat[k].std(axis=0)+1e-6)
+            # feats_flat[k] = (feats_flat[k]-feats_flat[k].mean(axis=0))/(feats_flat[k].std(axis=0)+1e-6)
             feats_flat[k] = sm.add_constant(feats_flat[k], prepend=True, has_constant="raise");
             feats_flat[k] = pd.DataFrame(feats_flat[k], columns=headers)
 

@@ -159,7 +159,7 @@ def vis_pca(x, labels=None, tags=None, threeD=False, data_type='vec'):
     tags = tags.flatten()
     assert(x.shape[0]==tags.shape[0]);
     if data_type=='mat':
-        U = tucker(x, rank=3, verbose=True)
+        U = parafac(x, rank=3, verbose=True, normalize_factors=True)
         low_x = U.factors[0]
     elif data_type=='vec':
         pca = PCA()
@@ -174,37 +174,37 @@ def vis_pca(x, labels=None, tags=None, threeD=False, data_type='vec'):
         axe = plt.figure().add_subplot(111, projection='3d')
         scatters = []
         for i in range(tags.max()+1):
-            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], low_x[tags==i][:,2], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10'));
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], low_x[tags==i][:,2], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10', alpha=0.5));
         # legend = axe.legend(scatters, labels)
     else:
         axe = plt.figure().add_subplot(111)
         scatters = []
         for i in range(tags.max()+1):
-            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10'));
+            scatters.append(axe.scatter(low_x[tags==i][:,0], low_x[tags==i][:,1], c=tags[tags==i], label=labels[i], norm=norm, cmap='tab10', alpha=0.5));
         # legend = axe.legend(scatters, labels)
     
     low_x = low_x.reshape(*x_unflat_shape, -1)
     
-    if threeD:
-        segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:3], 2), np.expand_dims(low_x[1:,:5,:3], 2)], axis=2)
-        segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 3))
-        lc = Line3DCollection(segments, cmap='tab10', norm=norm, alpha=1)
-        lc.set_array(tags)
-        axe.add_collection(lc)
-    else:
-        segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:2], 2), np.expand_dims(low_x[1:,:5,:2], 2)], axis=2)
-        segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 2))
-        print(segments.shape)
-        lc = LineCollection(segments, cmap='tab10', norm=norm, alpha=0.2)
-        lc.set_array(tags)
-        axe.add_collection(lc)
+    # if threeD:
+    #     segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:3], 2), np.expand_dims(low_x[1:,:5,:3], 2)], axis=2)
+    #     segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 3))
+    #     lc = Line3DCollection(segments, cmap='tab10', norm=norm, alpha=1)
+    #     lc.set_array(tags)
+    #     axe.add_collection(lc)
+    # else:
+    #     segments = np.concatenate([np.expand_dims(low_x[:-1,:5,:2], 2), np.expand_dims(low_x[1:,:5,:2], 2)], axis=2)
+    #     segments = segments.reshape((segments.shape[0]*segments.shape[1], 2, 2))
+    #     print(segments.shape)
+    #     lc = LineCollection(segments, cmap='tab10', norm=norm, alpha=0.2)
+    #     lc.set_array(tags)
+    #     axe.add_collection(lc)
     
     axe.set_xlabel('PC1')
     axe.set_ylabel('PC2')
     if threeD:
         axe.set_zlabel('PC3')
-    # axe.add_artist(legend)
-    plt.figure().tight_layout();
+    axe.legend()
+    # plt.tight_layout();
     plt.show();
     return axe;
 
@@ -246,6 +246,8 @@ def svc_cv(x, y, type='vec'):
             clf.fit(x[fold_idx], y[fold_idx])
             # new_pred = 
         
+
+
     return scores;
 
 def sig2asterisk(p):

@@ -55,10 +55,10 @@ def fitCausal(stims, outcomes, ratings, bonus_round_stims):
     best_cost = +1e6
     deltasgammatau = None
     for i in range(1):
-        res = minimize(fun=lambda deltasgammataup, stims, outcomes, ratings, bonus_round_stims: ratingLikelihood(deltasgammataup, stims, outcomes, ratings, bonus_round_stims)[-1],
-                    x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.3+1.8), np.random.rand(1)+1, np.random.rand(1)], 
+        res = minimize(fun=lambda deltasgammatau, stims, outcomes, ratings, bonus_round_stims: ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims)[-1],
+                    x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.3+1.8)], 
                     args=(stims, outcomes, ratings, bonus_round_stims),
-                    bounds=((0, np.inf), (0, np.inf), (0, 1), (1, np.inf), (0, np.inf), (0, np.inf)));
+                    bounds=((0, np.inf), (0, np.inf), (0, np.inf), (1, np.inf)));
         lrs, all_alphas, mse = ratingLikelihood(res.x, stims, outcomes, ratings, bonus_round_stims)
         if mse<best_cost:
             deltasgammatau = res.x; 
@@ -71,8 +71,7 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
     delta_r = deltasgammatau[1]
     gamma = deltasgammatau[2]
     tau = deltasgammatau[3]
-    p = deltasgammatau[4]
-    prior = deltasgammatau[5]
+    prior = 1
     prior = [prior]*3;
 
     batch_size, trials, im_per_trial = stims.shape
@@ -104,7 +103,7 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
             # print('alphas', alphas)
         alphas = alphas*(alphas>=0);
         all_alphas[i][-1] = alphas
-        means = alphas**p/((alphas**p).sum()+1e-6)
+        means = alphas/((alphas).sum()+1e-6)
         rev_ind = np.argsort(bonus_round_stims[i].numpy());
         mse += np.sum((ratings[[i]*num_pics, rev_ind].numpy()-means)**2)
         # print(ratings[[i]*num_pics, rev_ind].numpy(), means)

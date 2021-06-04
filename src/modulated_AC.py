@@ -24,11 +24,14 @@ class SGRUCell(torch.nn.Module):
         self.inits = inits;
 
         # input-hidden weights
-        self.x2h = torch.nn.Linear(input_dim, hidden_dim, bias=bias);
+        self.x2h = torch.nn.Linear(input_dim, 3*hidden_dim, bias=bias);
         # hidden-hidden weights
-        self.h2h = torch.nn.Linear(hidden_dim, hidden_dim, bias=bias);
+        self.h2h = torch.nn.Linear(hidden_dim, 3*hidden_dim, bias=bias);
 
-        self.h2mod = torch.nn.Linear(hidden_dim, 2*mod_rank, bias=bias);
+        self.lnx = torch.nn.LayerNorm(3*hidden_dim);
+        self.lnh = torch.nn.LayerNorm(3*hidden_dim);
+
+        self.h2mod = torch.nn.Linear(hidden_dim, 3*mod_rank, bias=bias);
 
         if (activation=="relu"):
             self.act = torch.nn.ReLU();
@@ -42,14 +45,11 @@ class SGRUCell(torch.nn.Module):
             self.act = Swish();
         # strength of weight modification
         self.alpha = torch.nn.Parameter(-4.5*torch.ones(1));
+        self.mod2hr = torch.nn.Linear(mod_rank, 1);
         self.mod2hs = torch.nn.Linear(mod_rank, 1);
         self.mod2hm = torch.nn.Linear(mod_rank, 1);
 
         # time constant of STDP weight modification
-        self.tau_v = torch.nn.Parameter(-2.25*torch.ones(1));
-        self.tau_r = torch.nn.Parameter(-3.0*torch.ones(1));
-        self.tau_o = torch.nn.Parameter(-3.5*torch.ones(1));
-        self.tau_E = torch.nn.Parameter(-4.5*torch.ones(1));
         self.tau_U = torch.nn.Parameter(-4.5*torch.ones(1));
         self.reset_parameter();
 
@@ -60,70 +60,71 @@ class SGRUCell(torch.nn.Module):
         ss = [];
         ms = [];
         rs = []
-        dUs = [];
-        os = [];
+        dUs = []
         for c in range(x.shape[0]):
-            v, h, dU, trace, (mod, s, m, r, o) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
+            v, h, dU, trace, (mod, s, m, r) = self._forward_step(x[c], h, v, dU, trace, freeze_fw=freeze_fw[c] if freeze_fw is not None else False);
             curr_out.append(h);
             mods.append(mod);
             ss.append(s);
             ms.append(m);
             rs.append(r);
-            dUs.append(dU);
-            os.append(o);
-        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms), torch.stack(rs), torch.stack(os));
+            dUs.append(dU)
+        return v, h, dU, trace, torch.stack(curr_out), torch.stack(dUs), (torch.stack(mods), torch.stack(ss), torch.stack(ms), torch.stack(rs));
 
     def _forward_step(self, x, h, v, dU, trace, **kwargs):
         freeze_fw = kwargs.get("freeze_fw")
-        trace_o, trace_r, trace_E = trace;
+        trace_e, trace_E = trace;
 
         # Wx = self.x2h(x);
         # Wh = self.h2h(h);
         # Wh[:, self.hidden_dim:2*self.hidden_dim] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
 
         # preactivations
-        Wx = self.x2h(x);
+        Wx = self.lnx(self.x2h(x));
         Wh = self.h2h(h);
         Wh[:, -self.hidden_dim:] += torch.bmm(torch.nn.functional.softplus(self.alpha)*dU, h.unsqueeze(2)).squeeze(2);
+        Wh = self.lnh(Wh);
 
         # segment into gates: forget and reset gate for GRU, concurrent STDP modulation for the eligibility trace
         # clip weight modification between for stability (only when it's used)
 
-        dv = Wx+Wh;
+        z, o, dv = torch.split(Wx+Wh, [self.hidden_dim]*3, dim=-1);
 
-        z = torch.sigmoid(self.tau_v);
+        o = torch.sigmoid(o);
+        z = torch.sigmoid(z);
         v = (1-z) * v + z * dv;
         new_h = self.act(v);
 
         mod = self.act(self.h2mod(new_h));
-        s, m = torch.split(mod, [self.mod_rank, self.mod_rank], dim=-1);
+        r, s, m = torch.split(mod, [self.mod_rank]*3, dim=-1);
+        r = torch.sigmoid(self.mod2hr(r));
         s = torch.sigmoid(self.mod2hs(s)).unsqueeze(-1);
         m = torch.nn.functional.tanhshrink(self.mod2hm(m)).unsqueeze(-1);
 
         if not freeze_fw:
-            new_trace_r = (1-torch.sigmoid(self.tau_r))*trace_r + torch.sigmoid(self.tau_r)*new_h;
-            new_trace_o = (1-torch.sigmoid(self.tau_o))*trace_o + torch.sigmoid(self.tau_o)*new_h;
-            new_trace_E = (1-torch.sigmoid(self.tau_E))*trace_E + torch.sigmoid(self.tau_E)*s*(
-                torch.bmm((trace_o*new_h).unsqueeze(2), trace_r.unsqueeze(1)) - \
-                torch.bmm(trace_r.unsqueeze(2), (trace_o*new_h).unsqueeze(1)) + \
-                torch.bmm(new_h.unsqueeze(2), trace_r.unsqueeze(1)) - \
-                torch.bmm(trace_r.unsqueeze(2), new_h.unsqueeze(1)));
-            w_max = (torch.abs(self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8)).detach();
-            dU = (1-torch.sigmoid(self.tau_U))*dU + torch.sigmoid(self.tau_U)*(w_max-torch.abs(dU))*m*new_trace_E;
+            h_for_fw = o*new_h;
+            new_trace_e = (1-r)*trace_e + r*h_for_fw;
+            new_trace_E = (1-s)*trace_E + s*(
+                torch.bmm(h_for_fw.unsqueeze(2), trace_e.unsqueeze(1)) - \
+                torch.bmm(trace_e.unsqueeze(2), h_for_fw.unsqueeze(1)));
+            dU = (1-torch.sigmoid(self.tau_U))*dU + torch.sigmoid(self.tau_U)*m*new_trace_E;
+            upper = torch.relu(self.clip_val-self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            lower = -torch.relu(self.clip_val+self.h2h.weight[-self.hidden_dim:,:])/(torch.nn.functional.softplus(self.alpha)+1e-8);
+            dU = torch.where(dU>upper, upper, dU);
+            dU = torch.where(dU<lower, lower, dU);
         else:
             new_trace_E = trace_E
-            new_trace_o = trace_o
-            new_trace_r = trace_r
+            new_trace_e = trace_e
         
-        return v, new_h, dU, (new_trace_o, new_trace_r, new_trace_E), (mod, s, m, r, o);
+        return v, new_h, dU, (new_trace_e, new_trace_E), (mod, s, m, r);
 
     def reset_parameter(self):
         for name, param in self.named_parameters():
             if "h2h.weight" in name:
-                for i in range(4):
+                for i in range(3):
                     torch.nn.init.orthogonal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.weight" in name:
-                for i in range(4):
+                for i in range(3):
                     torch.nn.init.xavier_normal_(param[i*self.hidden_dim:(i+1)*self.hidden_dim,:]);
             elif "x2h.bias" in name:
                 torch.nn.init.zeros_(param);
@@ -132,7 +133,7 @@ class SGRUCell(torch.nn.Module):
                 # param[:self.hidden_dim] = -1;
                 # param[self.hidden_dim:2*self.hidden_dim] = -1;
             elif "h2mod.weight" in name:
-                for i in range(2):
+                for i in range(3):
                   torch.nn.init.kaiming_normal_(param[i*self.mod_rank:(i+1)*self.mod_rank,:]);
             elif "h2mod.bias" in name:
                 torch.nn.init.zeros_(param);
@@ -148,10 +149,9 @@ class SGRUCell(torch.nn.Module):
         h_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         v_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         dU_0 = torch.zeros(batch_size, self.hidden_dim, self.hidden_dim).to(device);
-        trace_o_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
-        trace_r_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
+        trace_e_0 = torch.zeros(batch_size, self.hidden_dim).to(device);
         trace_E_0 = torch.zeros(batch_size, self.hidden_dim, self.hidden_dim).to(device);
-        return h_0, v_0, dU_0, (trace_o_0, trace_r_0, trace_E_0);
+        return h_0, v_0, dU_0, (trace_e_0, trace_E_0);
 
 
 class SGRU(torch.nn.Module):
@@ -191,7 +191,8 @@ class SGRU(torch.nn.Module):
                 torch.nn.BatchNorm2d(64),
                 torch.nn.ReLU(inplace=True),
                 torch.nn.MaxPool2d(2, 2), #64@1*1
-                torch.nn.Flatten(1)
+                torch.nn.Flatten(1),
+                torch.nn.LayerNorm(64)
             )
             input_dim += 64;
 
