@@ -427,7 +427,7 @@ all_task_types = torch.cat(all_task_types, dim=0)
 all_novel_outcomes = torch.cat(all_novel_outcomes, dim=0)
 all_actions = torch.cat(all_actions, dim=0)
 all_stim_orders = torch.cat(all_stim_orders, dim=0)
-ratings = (torch.cat(ratings, dim=0)/10).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
+ratings = (torch.cat(ratings, dim=0)/5).softmax(-1) # normalize to rating between 0 and 1, soften with higher temperature
 causal_ratings = (all_novel_outcomes>0).float().unsqueeze(-1)*ratings \
                + (all_novel_outcomes<0).float().unsqueeze(-1)*(1-ratings)/2
 all_bonus_round_novel_outcome_idx = torch.cat(all_bonus_round_novel_outcome_idx, dim=0) 
@@ -533,7 +533,7 @@ actual_dws = actual_dws.log()
 #     ["Novel image -> Novel punishment", "Novel image -> Novel reward", "Novel image -> Non-novel punishment", "Novel image -> Non-novel reward"], incremental=True);
 # axes.set_title("PCA of Fast Weight")
 
-# %% Plot 
+# %% Plot Weight Changes
 fig, axes = plt.subplots(2,2)
 
 titles = [['Novel Img->Positive Novel Rwd', 'Novel Img->Negative Novel Rwd'],
@@ -556,7 +556,7 @@ plt.setp(axes,  ylim=[-0.5, 6])
 fig.text(0.5, 0.04, 'Time-step', ha='center')
 fig.text(0.04, 0.5, r'$\Delta w$', va='center', rotation='vertical')
 
-# %%
+# %% Plot Causal Uncertainties from model fit
 fig, axes = plt.subplots(2,2)
 p1, =axes[0, 0].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==3)].mean(0))
 p2, =axes[0, 0].plot(causal_unc[(all_task_types==0) & (all_novel_outcomes==1) & (all_novel_stim_loc==4)].mean(0))
@@ -602,7 +602,7 @@ axes[1, 1].set_title('Novel Img->Positive NonNovel Rwd')
 fig.text(0.5, 0.04, 'Trial', ha='center', fontsize=12)
 fig.text(0.04, 0.5, r'Uncertainty', va='center', rotation='vertical', fontsize=12)
 
-# %%
+# %% Plot Modulation Signal
 fig, axes = plt.subplots(2,2)
 
 titles = [['Novel Img->Positive Novel Rwd', 'Novel Img->Negative Novel Rwd'],
@@ -626,8 +626,7 @@ for i in range(2):
 fig.text(0.5, 0.04, 'Time-step', ha='center', fontsize=12)
 fig.text(0.04, 0.5, 'Modulation Signal', va='center', rotation='vertical', fontsize=12)
 
-# %%
-
+# %% Plot Correlation between Causal Uncertainty and Weight Change
 fig, axes = plt.subplots(2,2)
 for i in range(2):
     for j in range(2):
@@ -639,10 +638,8 @@ for i in range(2):
 fig.text(0.5, 0.04, 'Causal Uncertainty', ha='center', fontsize=12)
 fig.text(0.04, 0.5, r'$\Delta w$', va='center', rotation='vertical', fontsize=12)
 fig.tight_layout()
-# %%
 
-# %%
-
+# %% Plot Correlation between Causal Uncertainty and Modulation
 fig, axes = plt.subplots(2,2)
 for i in range(2):
     for j in range(2):
@@ -653,4 +650,5 @@ for i in range(2):
         print(spearmanr(causal_unc[(all_task_types==i) & (all_novel_outcomes==(1-2*j)), 3:-1].flatten(), actual_lrs.t()[(all_task_types==i) & (all_novel_outcomes==(1-2*j)),3:].flatten()))
 fig.text(0.5, 0.04, 'Causal Uncertainty', ha='center', fontsize=12)
 fig.text(0.04, 0.5, r'$\tau_U m_t$', va='center', rotation='vertical', fontsize=12)
+
 # %%

@@ -51,14 +51,13 @@ def loglikelihood(alphabetaeps, actions, rewards):
     return Qls, Qrs, nll;
 
 def fitCausal(stims, outcomes, ratings, bonus_round_stims):
-    best_res = None;
     best_cost = +1e6
     deltasgammatau = None
-    for i in range(1):
+    for i in range(10):
         res = minimize(fun=lambda deltasgammatau, stims, outcomes, ratings, bonus_round_stims: ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims)[-1],
                     x0=[np.random.rand(1), np.random.rand(1), np.random.rand(1), 10**(np.random.rand(1)*0.3+1.8)], 
                     args=(stims, outcomes, ratings, bonus_round_stims),
-                    bounds=((0, np.inf), (0, np.inf), (0, np.inf), (1, np.inf)));
+                    bounds=((0, 1), (0, 1), (0, 1), (1, np.inf)));
         lrs, all_alphas, mse = ratingLikelihood(res.x, stims, outcomes, ratings, bonus_round_stims)
         if mse<best_cost:
             deltasgammatau = res.x; 
@@ -99,7 +98,7 @@ def ratingLikelihood(deltasgammatau, stims, outcomes, ratings, bonus_round_stims
             learning_rates = special.softmax(tau*variances, axis=-1)
             # print('learning rate', learning_rates)
             all_learning_rates[i][j] = learning_rates
-            alphas += gamma*learning_rates*outcomes[i][j].numpy()*(counts.astype(float) + delta_p*(np.arange(num_pics)==stims[i][j][0]) + delta_r*(np.arange(num_pics)==stims[i][j][-1]));
+            alphas += gamma*learning_rates*outcomes[i][j].numpy()*(counts.astype(float) + delta_p*(np.arange(num_pics)==stims[i][j][0].numpy()) + delta_r*(np.arange(num_pics)==stims[i][j][-1].numpy()));
             # print('alphas', alphas)
         alphas = alphas*(alphas>=0);
         all_alphas[i][-1] = alphas
